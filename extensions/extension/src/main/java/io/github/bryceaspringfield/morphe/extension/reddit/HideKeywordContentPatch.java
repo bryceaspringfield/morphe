@@ -13,6 +13,7 @@ import android.util.Log;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -184,12 +185,30 @@ public final class HideKeywordContentPatch {
     }
 
     /**
-     * Injection point. Adds the Keyword filter section to Morphe Patches' Reddit settings screen.
+     * The settings screen being built, saved when its initialize() starts.
+     */
+    private static WeakReference<Object> settingsFragment = new WeakReference<>(null);
+
+    /**
+     * Injection point. Saves Morphe Patches' Reddit settings screen when it starts building.
      *
      * @param fragment The settings screen, a {@link PreferenceFragment}.
      */
-    public static void addSettings(Object fragment) {
+    public static void setSettingsFragment(Object fragment) {
+        settingsFragment = new WeakReference<>(fragment);
+    }
+
+    /**
+     * Injection point. Adds the Keyword filter section to the settings screen saved by
+     * {@link #setSettingsFragment(Object)}, once the screen's own sections are built.
+     */
+    public static void addSettings() {
         try {
+            Object fragment = settingsFragment.get();
+            if (!(fragment instanceof PreferenceFragment)) {
+                Log.e(TAG, "addSettings: no settings screen saved, found " + fragment);
+                return;
+            }
             PreferenceFragment preferenceFragment = (PreferenceFragment) fragment;
             PreferenceScreen screen = preferenceFragment.getPreferenceScreen();
             Context context = preferenceFragment.getActivity();
@@ -207,6 +226,7 @@ public final class HideKeywordContentPatch {
                 return true;
             });
             category.addPreference(keywords);
+            Log.i(TAG, "addSettings: added the Keyword filter section");
         } catch (Exception ex) {
             Log.e(TAG, "addSettings failure", ex);
         }
@@ -351,6 +371,7 @@ public final class HideKeywordContentPatch {
             for (Object element : list) {
                 if (!shouldHide(rules, element)) filtered.add(element);
             }
+            Log.i(TAG, "filterFeedElements: hid " + (list.size() - filtered.size()) + " of " + list.size());
             return filtered.size() == list.size() ? list : filtered;
         } catch (Exception ex) {
             Log.e(TAG, "filterFeedElements failure", ex);
@@ -403,6 +424,7 @@ public final class HideKeywordContentPatch {
                 }
                 filtered.add(item);
             }
+            Log.i(TAG, "filterLinks: hid " + (list.size() - filtered.size()) + " of " + list.size());
             return filtered.size() == list.size() ? list : filtered;
         } catch (Exception ex) {
             Log.e(TAG, "filterLinks failure", ex);

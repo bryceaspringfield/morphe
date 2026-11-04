@@ -112,11 +112,12 @@ val hideKeywordContentPatch = bytecodePatch(
                 .map { it.index }
                 .reversed()
                 .forEach { index ->
-                    addInstruction(
-                        index,
-                        "invoke-static { p0 }, $EXTENSION_CLASS->addSettings(Ljava/lang/Object;)V"
-                    )
+                    addInstruction(index, "invoke-static { }, $EXTENSION_CLASS->addSettings()V")
                 }
+
+            // The screen is saved at the start, since the compiled method reuses the register of
+            // `this` for its own values before it returns.
+            addInstruction(0, "invoke-static { p0 }, $EXTENSION_CLASS->setSettingsFragment(Ljava/lang/Object;)V")
         }
     }
 }
