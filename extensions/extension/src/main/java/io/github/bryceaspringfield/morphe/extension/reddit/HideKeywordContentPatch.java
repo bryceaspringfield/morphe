@@ -4,6 +4,8 @@ import static io.github.bryceaspringfield.morphe.extension.reddit.FilterSettings
 
 import android.app.AlertDialog;
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.preference.Preference;
 import android.preference.PreferenceCategory;
 import android.preference.PreferenceFragment;
@@ -191,15 +193,7 @@ public final class HideKeywordContentPatch {
             List<?> list = (List<?>) result;
             List<Object> kept = new ArrayList<>(list.size());
             for (Object element : list) {
-                PostInfo post = PostInfo.fromElement(element);
-                String[] where = post.isPost ? SHOWN_PLACES.get(post.id) : null;
-                String reason = null;
-                if (where != null) {
-                    post.defaultCommunity(where[2]);
-                    reason = Filter.hidePost(post, where[0]);
-                    if (debug && reason != null) Log.d(TAG, "hide after translation (" + reason + ") " + where[1] + " " + post);
-                }
-                if (reason == null) kept.add(element);
+                if (hideAfterTranslation(element, debug) == null) kept.add(element);
             }
             if (kept.size() == list.size()) return result;
             Log.i(TAG, "filterModifiedFeed: hid " + (list.size() - kept.size()) + " of " + list.size());
@@ -208,6 +202,86 @@ public final class HideKeywordContentPatch {
             Log.e(TAG, "filterModifiedFeed failure", ex);
             return result;
         }
+    }
+
+    /**
+     * Why a post a feed showed is hidden now that a translation rewrote it, or null if it stays: the rules applied to
+     * the post at the place the feed showed it.
+     */
+    private static String hideAfterTranslation(Object element, boolean debug) {
+        PostInfo post = PostInfo.fromElement(element);
+        String[] where = post.isPost ? SHOWN_PLACES.get(post.id) : null;
+        if (where == null) return null;
+        post.defaultCommunity(where[2]);
+        String reason = Filter.hidePost(post, where[0]);
+        if (debug && reason != null) Log.d(TAG, "hide after translation (" + reason + ") " + where[1] + " " + post);
+        return reason;
+    }
+
+    private static final Handler MAIN = new Handler(Looper.getMainLooper());
+
+    /**
+     * Injection point, at the start of a pager's update of one post (a requested translation, a vote, a read mark).
+     * After a translation, filters the pager's posts again once the update is written, since a translation of one
+     * post changes the post in place and runs no feed modification.
+     *
+     * @param pager  The feed's pager.
+     * @param events The update's events.
+     */
+    public static void onElementEvents(Object pager, List<?> events) {
+        try {
+            if (pager == null || events == null || !Filter.anyPostFilter()) return;
+            for (Object event : events) {
+                if (event == null || !event.getClass().getName().endsWith(".OnTranslationSuccess")) continue;
+                MAIN.post(() -> {
+                    try {
+                        boolean hid = refilterPagerState(pager);
+                        if (getBoolean(DEBUG)) Log.d(TAG, "pager state after translation: " + (hid ? "posts hidden" : "unchanged"));
+                    } catch (Throwable ex) {
+                        Log.e(TAG, "refilterPagerState failure", ex);
+                    }
+                });
+                return;
+            }
+        } catch (Exception ex) {
+            Log.e(TAG, "onElementEvents failure", ex);
+        }
+    }
+
+    /**
+     * Called by {@link #refilterPagerState(Object)} with the pager state's posts and their parallel display models.
+     *
+     * @return The two lists without the posts the rules hide after translation, as the app's immutable lists, or
+     * null if every post stays.
+     */
+    public static Object[] keptLists(List<?> elements, List<?> models) {
+        try {
+            if (elements == null || models == null || elements.size() != models.size()) return null;
+            boolean debug = getBoolean(DEBUG);
+            List<Object> keptElements = new ArrayList<>(elements.size());
+            List<Object> keptModels = new ArrayList<>(models.size());
+            for (int i = 0; i < elements.size(); i++) {
+                if (hideAfterTranslation(elements.get(i), debug) != null) continue;
+                keptElements.add(elements.get(i));
+                keptModels.add(models.get(i));
+            }
+            if (keptElements.size() == elements.size()) return null;
+            Log.i(TAG, "filterPagerState: hid " + (elements.size() - keptElements.size()) + " of " + elements.size());
+            return new Object[]{immutableList(keptElements), immutableList(keptModels)};
+        } catch (Exception ex) {
+            Log.e(TAG, "keptLists failure", ex);
+            return null;
+        }
+    }
+
+    /**
+     * Removes the posts {@link #keptLists(List, List)} drops from a pager's state, with the app's own state copy and
+     * compare-and-set; the patch replaces this method.
+     *
+     * @return Whether posts were removed.
+     */
+    public static boolean refilterPagerState(Object pager) {
+        return false;
     }
 
     /**

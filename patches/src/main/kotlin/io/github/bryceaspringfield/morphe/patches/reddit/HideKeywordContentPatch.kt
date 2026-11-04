@@ -5,8 +5,10 @@ import app.morphe.patcher.extensions.InstructionExtensions.addInstructions
 import app.morphe.patcher.extensions.InstructionExtensions.addInstructionsWithLabels
 import app.morphe.patcher.extensions.InstructionExtensions.getInstruction
 import app.morphe.patcher.extensions.InstructionExtensions.instructions
+import app.morphe.patcher.extensions.InstructionExtensions.replaceInstruction
 import app.morphe.patcher.patch.bytecodePatch
 import app.morphe.patcher.util.getReference
+import app.morphe.patcher.util.proxy.mutableTypes.MutableMethod.Companion.toMutable
 import app.morphe.patcher.util.smali.ExternalLabel
 import com.android.tools.smali.dexlib2.Opcode
 import com.android.tools.smali.dexlib2.iface.instruction.FiveRegisterInstruction
@@ -17,6 +19,14 @@ import com.android.tools.smali.dexlib2.iface.Method
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference
 import com.android.tools.smali.dexlib2.iface.reference.TypeReference
 import com.android.tools.smali.dexlib2.AccessFlags
+import com.android.tools.smali.dexlib2.builder.MutableMethodImplementation
+import com.android.tools.smali.dexlib2.builder.instruction.BuilderInstruction22c
+import com.android.tools.smali.dexlib2.builder.instruction.BuilderInstruction35c
+import com.android.tools.smali.dexlib2.builder.instruction.BuilderInstruction3rc
+import com.android.tools.smali.dexlib2.iface.instruction.NarrowLiteralInstruction
+import com.android.tools.smali.dexlib2.iface.instruction.RegisterRangeInstruction
+import com.android.tools.smali.dexlib2.immutable.ImmutableMethod
+import com.android.tools.smali.dexlib2.immutable.ImmutableMethodParameter
 import io.github.bryceaspringfield.morphe.patches.reddit.Constants.COMPATIBILITY_REDDIT
 import java.util.logging.Logger
 
@@ -35,8 +45,15 @@ private const val DRAWER_LIST_BINDER =
     "Lcom/reddit/screens/drawer/community/CommunityDrawerPresenter\$bindListOnView\$2;"
 private const val MENU_BADGE_FLOW =
     "Lcom/reddit/navdrawer/composables/RedditMainNavigationButtonProvider\$mainNavigationIcon\$navIconBadgeVisible\$2\$1;"
-private const val FEED_MODIFICATION =
-    "Lcom/reddit/feeds/impl/domain/paging/RedditCachedFeedPager\$applyFeedModification\$2;"
+/** The modification steps of the two feed pagers, each calling the modification and returning the modified feed. */
+private val FEED_MODIFICATIONS = listOf(
+    "Lcom/reddit/feeds/impl/domain/paging/RedditCachedFeedPager\$applyFeedModification\$2;",
+    "Lcom/reddit/feeds/impl/domain/paging/RedditFeedPager\$applyFeedModification\$2\$1;",
+)
+
+/** The suspended call of RedditFeedPager's applyFeedModification, whose constructor takes the pager. */
+private const val FEED_PAGER_MODIFICATION_CALL =
+    "Lcom/reddit/feeds/impl/domain/paging/RedditFeedPager\$applyFeedModification\$1;"
 
 /**
  * Whether a method is the app's copy of a collection into an immutable list of the type given: static, taking an
@@ -144,8 +161,9 @@ val hideKeywordContentPatch = bytecodePatch(
     finalize {
         // Filter a feed again after a translation rewrites its posts: the result of the pager's modification step, at the
         // modification call and at the return of a resumed call.
-        run {
-            val method = mutableClassDefByOrNull(FEED_MODIFICATION)?.methods?.firstOrNull { it.name == "invokeSuspend" }
+        var listCopyWritten = false
+        FEED_MODIFICATIONS.forEach { modificationClass -> run {
+            val method = mutableClassDefByOrNull(modificationClass)?.methods?.firstOrNull { it.name == "invokeSuspend" }
             val listType = method?.instructions?.firstNotNullOfOrNull {
                 if (it.opcode == Opcode.CHECK_CAST) it.getReference<TypeReference>()?.type else null
             }
@@ -162,12 +180,12 @@ val hideKeywordContentPatch = bytecodePatch(
             if (method == null || field == null || copy == null || stub == null ||
                 method.getInstruction(callIndex + 1).opcode != Opcode.MOVE_RESULT_OBJECT
             ) {
-                logger.warning("Could not find the feed's modification step; translated posts are not filtered again")
+                logger.warning("Could not find the modification step $modificationClass; its translated posts are not filtered again")
                 return@run
             }
 
             // The extension's list copy calls the app's.
-            stub.addInstructions(
+            if (!listCopyWritten) stub.addInstructions(
                 0,
                 """
                     invoke-static { p0 }, ${copy.definingClass}->${copy.name}(Ljava/lang/Iterable;)${copy.returnType}
@@ -206,6 +224,126 @@ val hideKeywordContentPatch = bytecodePatch(
                 """ else logger.warning("The modification call's registers are unexpected; synchronous results are not filtered again")
                 hooks.sortedByDescending { it.first }.forEach { (index, code) -> addInstructions(index, code) }
             }
+            listCopyWritten = true
+        } }
+
+        // A requested translation of one post changes the post in place, through the pager's update of one element,
+        // and runs no feed modification. After such an update the extension filters the pager's state again, and the
+        // generated refilterPagerState writes the posts kept with the app's own state copy and compare-and-set.
+        run {
+            val pagerType = classDefByOrNull(FEED_PAGER_MODIFICATION_CALL)?.methods
+                ?.firstOrNull { it.name == "<init>" }?.parameterTypes?.firstOrNull()?.toString()
+            val pager = pagerType?.let { mutableClassDefByOrNull(it) }
+            val update = pager?.methods?.firstOrNull { m ->
+                m.returnType == "V" && m.parameterTypes.map { it.toString() } == listOf("Ljava/lang/String;", "Ljava/util/List;") &&
+                        m.implementation?.instructions?.any { it.opcode == Opcode.INVOKE_STATIC_RANGE } == true
+            }
+            val calls = update?.instructions?.mapNotNull { i -> i.getReference<MethodReference>()?.let { i to it } }.orEmpty()
+            val cas = calls.firstOrNull { (_, r) ->
+                r.returnType == "Z" && r.definingClass != "Lkotlin/jvm/internal/Intrinsics;" &&
+                        r.parameterTypes.map { it.toString() } == listOf("Ljava/lang/Object;", "Ljava/lang/Object;")
+            }
+            val stateFlow = cas?.second?.definingClass
+            val getValue = calls.firstOrNull { (_, r) -> r.definingClass == stateFlow && r.name == "getValue" }
+            val copyCall = calls.firstOrNull { (i, r) ->
+                i.opcode == Opcode.INVOKE_STATIC_RANGE && r.parameterTypes.size >= 4 &&
+                        r.parameterTypes[0].toString() == r.returnType && r.parameterTypes[1] == r.parameterTypes[2]
+            }
+            val copy = copyCall?.second
+            val stateType = copy?.returnType
+            val listType = copy?.parameterTypes?.get(1)?.toString()
+            val stateField = update?.instructions?.firstNotNullOfOrNull { i ->
+                i.getReference<FieldReference>()?.takeIf {
+                    i.opcode == Opcode.IGET_OBJECT && it.type == stateFlow && it.definingClass == pagerType
+                }
+            }
+            val listFields = update?.instructions?.mapNotNull { i ->
+                i.getReference<FieldReference>()?.takeIf {
+                    i.opcode == Opcode.IGET_OBJECT && it.definingClass == stateType && it.type == listType
+                }
+            }?.distinctBy { it.name }.orEmpty()
+            val extension = mutableClassDefByOrNull(EXTENSION_CLASS)
+            if (update == null || cas == null || getValue == null || copyCall == null || copy == null || stateField == null ||
+                listFields.size != 2 || extension == null || update.implementation!!.registerCount > 16 ||
+                copy.parameterTypes.any { it.toString() == "J" || it.toString() == "D" }
+            ) {
+                logger.warning("Could not find the feed pager's element update; posts translated on request are not filtered again")
+                return@run
+            }
+            // The mask the app passes: the literal last written to the copy call's last register before the call.
+            val range = copyCall.first as RegisterRangeInstruction
+            val maskRegister = range.startRegister + range.registerCount - 1
+            val copyIndex = update.instructions.indexOf(copyCall.first)
+            val mask = (copyIndex - 1 downTo 0).firstNotNullOfOrNull { j ->
+                val i = update.getInstruction(j)
+                if ((i as? OneRegisterInstruction)?.registerA == maskRegister) (i as? NarrowLiteralInstruction)?.narrowLiteral ?: -4 else null
+            } ?: -4
+
+            val count = copy.parameterTypes.size
+            val defaults = (3 until count - 1).joinToString("\n") { k -> "const/4 v${8 + k}, 0x0" }
+            fun callOp(op: Opcode) = if (op == Opcode.INVOKE_INTERFACE) "invoke-interface" else "invoke-virtual"
+            val body = """
+                move-object/from16 v5, p0
+                check-cast v5, $pagerType
+                iget-object v0, v5, $pagerType->${stateField.name}:$stateFlow
+                :loop
+                ${callOp(getValue.first.opcode)} { v0 }, $stateFlow->getValue()Ljava/lang/Object;
+                move-result-object v1
+                check-cast v1, $stateType
+                iget-object v2, v1, $stateType->${listFields[0].name}:$listType
+                iget-object v3, v1, $stateType->${listFields[1].name}:$listType
+                invoke-static { v2, v3 }, $EXTENSION_CLASS->keptLists(Ljava/util/List;Ljava/util/List;)[Ljava/lang/Object;
+                move-result-object v4
+                if-eqz v4, :none
+                move-object v8, v1
+                const/4 v5, 0x0
+                aget-object v9, v4, v5
+                check-cast v9, $listType
+                const/4 v5, 0x1
+                aget-object v10, v4, v5
+                check-cast v10, $listType
+                $defaults
+                const v${8 + count - 1}, $mask
+                invoke-static/range { v8 .. v${8 + count - 1} }, ${copy.definingClass}->${copy.name}(${copy.parameterTypes.joinToString("")})${copy.returnType}
+                move-result-object v6
+                ${callOp(cas.first.opcode)} { v0, v1, v6 }, $stateFlow->${cas.second.name}(Ljava/lang/Object;Ljava/lang/Object;)Z
+                move-result v7
+                if-eqz v7, :loop
+                const/4 v0, 0x1
+                return v0
+                :none
+                const/4 v0, 0x0
+                return v0
+            """
+            extension.methods.removeIf { it.name == "refilterPagerState" }
+            extension.methods.add(
+                ImmutableMethod(
+                    EXTENSION_CLASS,
+                    "refilterPagerState",
+                    listOf(ImmutableMethodParameter("Ljava/lang/Object;", emptySet(), "pager")),
+                    "Z",
+                    AccessFlags.PUBLIC.value or AccessFlags.STATIC.value,
+                    emptySet(),
+                    null,
+                    MutableMethodImplementation(8 + count + 1),
+                ).toMutable().apply {
+                    addInstructionsWithLabels(0, body)
+                    // The field reads and the two calls use the app's own references.
+                    val reads = instructions.withIndex().filter { it.value.opcode == Opcode.IGET_OBJECT }.map { it.index }
+                    listOf(stateField, listFields[0], listFields[1]).zip(reads).forEach { (field, index) ->
+                        val read = getInstruction<TwoRegisterInstruction>(index)
+                        replaceInstruction(index, BuilderInstruction22c(Opcode.IGET_OBJECT, read.registerA, read.registerB, field))
+                    }
+                    val copyAt = instructions.indexOfFirst { it.opcode == Opcode.INVOKE_STATIC_RANGE }
+                    replaceInstruction(copyAt, BuilderInstruction3rc(Opcode.INVOKE_STATIC_RANGE, 8, count, copy))
+                    val casAt = instructions.withIndex().last {
+                        (it.value.opcode == Opcode.INVOKE_VIRTUAL || it.value.opcode == Opcode.INVOKE_INTERFACE) &&
+                                it.value.getReference<MethodReference>()?.parameterTypes?.size == 2
+                    }.index
+                    replaceInstruction(casAt, BuilderInstruction35c(cas.first.opcode, 3, 0, 1, 6, 0, 0, cas.second))
+                }
+            )
+            update.addInstruction(0, "invoke-static { p0, p2 }, $EXTENSION_CLASS->onElementEvents(Ljava/lang/Object;Ljava/util/List;)V")
         }
 
         // Filter each post's comments where the app stores them.
