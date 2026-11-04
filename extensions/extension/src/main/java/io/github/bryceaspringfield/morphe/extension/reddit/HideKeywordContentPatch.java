@@ -1,9 +1,9 @@
 package io.github.bryceaspringfield.morphe.extension.reddit;
 
-import android.annotation.SuppressLint;
+import static io.github.bryceaspringfield.morphe.extension.reddit.FilterSettings.*;
+
 import android.app.AlertDialog;
 import android.content.Context;
-import android.content.SharedPreferences;
 import android.preference.Preference;
 import android.preference.PreferenceCategory;
 import android.preference.PreferenceFragment;
@@ -11,178 +11,406 @@ import android.preference.PreferenceScreen;
 import android.text.InputType;
 import android.util.Log;
 import android.widget.EditText;
-import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- * Hides posts whose title, body text, community, or author matches a keyword.
- * <p>
- * Each line of the keyword list is one rule:
- * <ul>
- *     <li>{@code r/name} hides posts in the community {@code name}.</li>
- *     <li>{@code u/name} hides posts by the account {@code name}.</li>
- *     <li>{@code "phrase"} hides posts where the phrase appears as whole words.</li>
- *     <li>Any other text hides posts where it appears anywhere, case-insensitively.</li>
- * </ul>
- * Plain and quoted rules are matched against the title, the body text, the community name,
- * and the author name.
- * <p>
- * The feed elements are Kotlin data classes with obfuscated field names. Their toString() keeps the
- * source property names as labels (for example {@code ", title="}), so the values are read from it.
- * This class uses no class of Morphe Patches or of Reddit at compile time, since its bundle is
- * selected beside Morphe Patches.
+ * The injection points of the Hide keyword content patch, and its section of Morphe's Reddit settings screen.
+ * This bundle uses no class of Morphe Patches or of Reddit at compile time, since it is selected beside
+ * Morphe Patches; Reddit's classes are read by reflection and by their toString().
  */
 @SuppressWarnings({"unused", "deprecation"})
 public final class HideKeywordContentPatch {
 
-    private static final String TAG = "RedditKeywordFilter";
-    private static final String PREFERENCES = "reddit_keyword_filter";
-    private static final String KEY_RULES = "rules";
+    private static final String RULE_HELP = "One rule a line:\n"
+            + "  r/name  hides a community\n"
+            + "  u/name  hides an account\n"
+            + "  flair:Meme  hides posts with that flair\n"
+            + "  !flair:Meme  hides posts without it\n"
+            + "  \"phrase\"  matches whole words\n"
+            + "  any text  matches anywhere\n"
+            + "Start a rule with communities and a colon to limit it to them, for example\n"
+            + "  r/pics: cat\n"
+            + "  r/news, r/worldnews: !flair:Politics";
+
+    // region Feed hooks
 
     /**
-     * Added during patching to the feed's post element, which holds the post's parts in a list.
+     * The FeedType field of each feed data source class.
      */
-    public interface PostContainer {
-    }
+    private static final Map<Class<?>, Field> FEED_TYPE_FIELDS = new ConcurrentHashMap<>();
 
-    /**
-     * Added during patching to the post title element.
-     */
-    public interface TitleElement {
-    }
-
-    /**
-     * Added during patching to the post body preview element.
-     */
-    public interface TextElement {
-    }
-
-    /**
-     * Added during patching to the post header element, which names the community and the author.
-     */
-    public interface HeaderElement {
-    }
-
-    /**
-     * Added during patching to the classic view's post element.
-     */
-    public interface ClassicPost {
-    }
-
-    private static final class Rules {
-        final String source;
-        final List<String> communities = new ArrayList<>();
-        final List<String> authors = new ArrayList<>();
-        final List<String> phrases = new ArrayList<>();
-        final List<Pattern> wholeWords = new ArrayList<>();
-
-        Rules(String source) {
-            this.source = source;
-
-            for (String line : source.split("\n")) {
-                String rule = line.trim();
-                if (rule.isEmpty()) continue;
-                String lower = rule.toLowerCase(Locale.ROOT);
-
-                if (lower.length() > 2 && (lower.startsWith("r/") || lower.startsWith("u/"))) {
-                    (lower.charAt(0) == 'r' ? communities : authors).add(lower.substring(2));
-                } else if (rule.length() > 2 && rule.startsWith("\"") && rule.endsWith("\"")) {
-                    wholeWords.add(Pattern.compile(
-                            "(?<![\\p{L}\\p{N}_])" + Pattern.quote(lower.substring(1, lower.length() - 1))
-                                    + "(?![\\p{L}\\p{N}_])"));
-                } else {
-                    phrases.add(lower);
+    private static String feedType(Object source) {
+        if (source == null) return null;
+        Class<?> type = source.getClass();
+        Field field = FEED_TYPE_FIELDS.get(type);
+        if (field == null && !FEED_TYPE_FIELDS.containsKey(type)) {
+            for (Class<?> current = type; current != null && field == null; current = current.getSuperclass()) {
+                for (Field candidate : current.getDeclaredFields()) {
+                    if (candidate.getType().isEnum() && candidate.getType().getSimpleName().equals("FeedType")) {
+                        candidate.setAccessible(true);
+                        field = candidate;
+                        break;
+                    }
                 }
             }
+            if (field != null) FEED_TYPE_FIELDS.put(type, field);
         }
-
-        boolean isEmpty() {
-            return communities.isEmpty() && authors.isEmpty() && phrases.isEmpty() && wholeWords.isEmpty();
-        }
-
-        int size() {
-            return communities.size() + authors.size() + phrases.size() + wholeWords.size();
-        }
-    }
-
-    /**
-     * The start of the next label in a data class's toString().
-     */
-    private static final Pattern NEXT_LABEL = Pattern.compile(", [a-zA-Z]+=");
-
-    /**
-     * The fields of each post container class that may hold its parts.
-     */
-    private static final Map<Class<?>, List<Field>> PART_FIELDS = new ConcurrentHashMap<>();
-
-    /**
-     * The getters of each listing item class, in the order title, body text, community, author.
-     */
-    private static final Map<Class<?>, Method[]> LINK_GETTERS = new ConcurrentHashMap<>();
-
-    private static final String[] LINK_GETTER_NAMES = {"getTitle", "getSelftext", "getSubreddit", "getAuthor"};
-
-    private static volatile Rules rules = new Rules("");
-
-    @SuppressLint("StaticFieldLeak")
-    private static volatile SharedPreferences preferences;
-
-    // region Settings
-
-    @SuppressLint("PrivateApi")
-    private static SharedPreferences getPreferences() {
-        SharedPreferences current = preferences;
-        if (current != null) return current;
+        if (field == null) return null;
         try {
-            Context context = (Context) Class.forName("android.app.ActivityThread")
-                    .getMethod("currentApplication").invoke(null);
-            if (context == null) return null;
-            current = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
-            preferences = current;
-            return current;
+            Object value = field.get(source);
+            return value == null ? null : ((Enum<?>) value).name();
         } catch (Exception ex) {
-            Log.e(TAG, "Could not open the keyword list", ex);
             return null;
         }
     }
 
-    private static String getRulesText() {
-        SharedPreferences current = getPreferences();
-        return current == null ? "" : current.getString(KEY_RULES, "");
+    /**
+     * The community a community feed's data source loads: the text field beside its community ID (t5_...).
+     */
+    private static String sourceCommunity(Object source) {
+        if (source == null) return null;
+        List<String> values = new ArrayList<>();
+        boolean hasId = false;
+        for (Class<?> type = source.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {
+            for (Field field : type.getDeclaredFields()) {
+                if (field.getType() != String.class || java.lang.reflect.Modifier.isStatic(field.getModifiers())) continue;
+                try {
+                    field.setAccessible(true);
+                    Object value = field.get(source);
+                    if (value == null) continue;
+                    if (((String) value).startsWith("t5_")) hasId = true;
+                    else values.add((String) value);
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        if (!hasId) return null;
+        for (String value : values) {
+            if (value.matches("(?:r/)?[A-Za-z0-9_]{2,21}")) return value;
+        }
+        return null;
     }
 
     /**
-     * Rereads the keyword list only when its text changes, so edits apply without a restart.
+     * The text fields of a feed's data source, for debug logging.
      */
-    private static Rules getRules() {
-        String source = getRulesText();
-        Rules current = rules;
-        if (!current.source.equals(source)) {
-            current = new Rules(source);
-            rules = current;
+    private static String describeSource(Object source) {
+        if (source == null) return "null";
+        StringBuilder text = new StringBuilder(source.getClass().getName());
+        for (Class<?> type = source.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {
+            for (Field field : type.getDeclaredFields()) {
+                if (field.getType() != String.class) continue;
+                try {
+                    field.setAccessible(true);
+                    text.append(' ').append(type.getSimpleName()).append('.').append(field.getName()).append('=')
+                            .append(field.get(source));
+                } catch (Exception ignored) {
+                }
+            }
         }
-        return current;
+        return text.toString();
     }
 
-    private static String summary(String text) {
-        int count = new Rules(text).size();
-        if (count == 0) {
-            return "No rules. One rule a line: r/community, u/account, \"whole phrase\", or any text.";
+    /**
+     * Injection point. Filters each page of a feed (Home, Popular, News, a community, search, a profile).
+     *
+     * @param source The feed's data source, which names its feed type.
+     */
+    public static List<?> filterFeedElements(List<?> list, Object source) {
+        try {
+            if (list == null || list.isEmpty() || !Filter.anyPostFilter()) return list;
+            String type = feedType(source);
+            String place = Filter.placeOf(type);
+            if (place == null) return list;
+
+            boolean debug = getBoolean(DEBUG);
+            if (debug) Log.d(TAG, "source " + type + " " + describeSource(source));
+            String community = PLACE_COMMUNITY.equals(place) ? sourceCommunity(source) : null;
+            List<Object> filtered = new ArrayList<>(list.size());
+            for (Object element : list) {
+                PostInfo post = PostInfo.fromElement(element);
+                post.defaultCommunity(community);
+                if (debug && !post.isPost) {
+                    String text = String.valueOf(element);
+                    Log.d(TAG, "not a post: " + text.substring(0, Math.min(600, text.length())));
+                }
+                String reason = Filter.hidePost(post, place);
+                if (debug) Log.d(TAG, (reason == null ? "show " : "hide (" + reason + ") ") + type + " " + post);
+                if (reason == null) {
+                    filtered.add(element);
+                    if (post.isPost && !post.id.isEmpty()) SHOWN_PLACES.put(post.id, new String[]{place, type, community});
+                }
+            }
+            Log.i(TAG, "filterFeedElements " + type + ": hid " + (list.size() - filtered.size()) + " of " + list.size());
+            return filtered.size() == list.size() ? list : filtered;
+        } catch (Exception ex) {
+            Log.e(TAG, "filterFeedElements failure", ex);
+            return list;
         }
-        return count + (count == 1 ? " rule" : " rules")
-                + ". One rule a line: r/community, u/account, \"whole phrase\", or any text.";
     }
+
+    /**
+     * The place, feed type, and community of each post a feed showed, by post ID, for filtering the feed again after
+     * a translation rewrites its posts.
+     */
+    private static final Map<String, String[]> SHOWN_PLACES = Collections.synchronizedMap(
+            new LinkedHashMap<String, String[]>(512, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, String[]> eldest) {
+                    return size() > 4000;
+                }
+            });
+
+    /**
+     * Injection point. Filters a feed again after a translation modification rewrote its posts (an automatic or
+     * requested translation, or a repost's original), since the page filter saw only the original text.
+     *
+     * @param result       The modified feed, or another object while the modification is suspended.
+     * @param modification The feed modification.
+     * @return The result, or the posts to keep as the app's immutable list.
+     */
+    public static Object filterModifiedFeed(Object result, Object modification) {
+        try {
+            if (!(result instanceof List) || modification == null) return result;
+            String kind = modification.getClass().getName();
+            boolean debug = getBoolean(DEBUG);
+            if (debug) Log.d(TAG, "feed modification " + kind);
+            if (!kind.contains(".translation.") || !Filter.anyPostFilter()) return result;
+            List<?> list = (List<?>) result;
+            List<Object> kept = new ArrayList<>(list.size());
+            for (Object element : list) {
+                PostInfo post = PostInfo.fromElement(element);
+                String[] where = post.isPost ? SHOWN_PLACES.get(post.id) : null;
+                String reason = null;
+                if (where != null) {
+                    post.defaultCommunity(where[2]);
+                    reason = Filter.hidePost(post, where[0]);
+                    if (debug && reason != null) Log.d(TAG, "hide after translation (" + reason + ") " + where[1] + " " + post);
+                }
+                if (reason == null) kept.add(element);
+            }
+            if (kept.size() == list.size()) return result;
+            Log.i(TAG, "filterModifiedFeed: hid " + (list.size() - kept.size()) + " of " + list.size());
+            return immutableList(kept);
+        } catch (Exception ex) {
+            Log.e(TAG, "filterModifiedFeed failure", ex);
+            return result;
+        }
+    }
+
+    /**
+     * The app's immutable copy of a list; the patch writes this method's body.
+     */
+    public static Object immutableList(List<?> list) {
+        return list;
+    }
+
+    /**
+     * The data source of the page being filtered, set just before {@link #filterFeedElements(List)} on the same thread.
+     */
+    private static final ThreadLocal<Object> FEED_SOURCE = new ThreadLocal<>();
+
+    /**
+     * Injection point. Saves the data source of the page the next call filters.
+     */
+    public static void setFeedSource(Object source) {
+        FEED_SOURCE.set(source);
+    }
+
+    /**
+     * Injection point. Filters a feed page, of the data source saved by {@link #setFeedSource(Object)}.
+     */
+    public static List<?> filterFeedElements(List<?> list) {
+        Object source = FEED_SOURCE.get();
+        FEED_SOURCE.remove();
+        return filterFeedElements(list, source);
+    }
+
+    /**
+     * Injection point. Filters the older post listings, which hold com.reddit.domain.model.Link items.
+     */
+    public static List<?> filterLinks(List<?> list) {
+        try {
+            if (list == null || list.isEmpty() || !Filter.anyPostFilter()) return list;
+            boolean debug = getBoolean(DEBUG);
+            List<Object> filtered = new ArrayList<>(list.size());
+            for (Object item : list) {
+                String reason = null;
+                if (PostInfo.isLink(item)) {
+                    PostInfo post = PostInfo.fromLink(item);
+                    reason = Filter.hidePost(post, PLACE_OTHER);
+                    if (debug) Log.d(TAG, (reason == null ? "show " : "hide (" + reason + ") ") + "listing " + post);
+                }
+                if (reason == null) filtered.add(item);
+            }
+            Log.i(TAG, "filterLinks: hid " + (list.size() - filtered.size()) + " of " + list.size());
+            return filtered.size() == list.size() ? list : filtered;
+        } catch (Exception ex) {
+            Log.e(TAG, "filterLinks failure", ex);
+            return list;
+        }
+    }
+
+    /**
+     * Injection point. Filters a post's comments; a hidden comment's replies follow it out.
+     */
+    public static List<?> filterComments(List<?> list) {
+        try {
+            if (list == null || list.isEmpty() || !Filter.anyCommentFilter()) return list;
+            boolean debug = getBoolean(DEBUG);
+            List<Object> filtered = new ArrayList<>(list.size());
+            int hiddenDepth = -1;
+            for (Object item : list) {
+                int depth = Filter.depthOf(item);
+                if (hiddenDepth >= 0) {
+                    if (depth > hiddenDepth) continue;
+                    hiddenDepth = -1;
+                }
+                if (Filter.isComment(item)) {
+                    String reason = Filter.hideComment(item);
+                    if (reason != null) {
+                        if (debug) Log.d(TAG, "hide comment (" + reason + ")");
+                        hiddenDepth = Math.max(depth, 0);
+                        continue;
+                    }
+                }
+                filtered.add(item);
+            }
+            Log.i(TAG, "filterComments: hid " + (list.size() - filtered.size()) + " of " + list.size());
+            return filtered.size() == list.size() ? list : filtered;
+        } catch (Exception ex) {
+            Log.e(TAG, "filterComments failure", ex);
+            return list;
+        }
+    }
+
+    // endregion
+
+    // region Navigation hooks
+
+    /**
+     * Injection point. Returns null for a bottom bar tab to hide, and the tab otherwise.
+     */
+    public static Enum<?> navigationTab(Enum<?> tab) {
+        try {
+            if (tab != null && getBoolean(HIDE_INBOX_TAB)) {
+                String name = tab.name();
+                if (name.equals("Inbox") || name.equals("UnifiedInbox")) return null;
+            }
+        } catch (Exception ex) {
+            Log.e(TAG, "navigationTab failure", ex);
+        }
+        return tab;
+    }
+
+    /**
+     * Injection point. Whether to hide the badge (orange dot) on the sidebar button.
+     */
+    public static boolean hideMenuBadge() {
+        try {
+            return getBoolean(HIDE_MENU_BADGE);
+        } catch (Exception ex) {
+            return false;
+        }
+    }
+
+    private static final Map<Class<?>, Field[]> ROW_FIELDS = new ConcurrentHashMap<>();
+
+    private static Field[] rowFields(Class<?> type) {
+        Field[] fields = ROW_FIELDS.get(type);
+        if (fields != null) return fields;
+        List<Field> found = new ArrayList<>();
+        for (Field field : type.getDeclaredFields()) {
+            if (field.getType() == int.class || field.getType().isEnum()) {
+                field.setAccessible(true);
+                found.add(field);
+            }
+        }
+        fields = found.toArray(new Field[0]);
+        ROW_FIELDS.put(type, fields);
+        return fields;
+    }
+
+    /**
+     * The sidebar section header an item opens (its HeaderItem enum's name), or null when the item is no header.
+     */
+    private static String headerOf(Object item) {
+        for (Field field : rowFields(item.getClass())) {
+            if (field.getType().isEnum() && field.getType().getSimpleName().equals("HeaderItem")) {
+                try {
+                    Object value = field.get(item);
+                    return value == null ? "" : ((Enum<?>) value).name();
+                } catch (Exception ex) {
+                    return "";
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Injection point. Removes the sidebar rows the user hid; a hidden section loses its header and its rows.
+     */
+    public static List<?> filterSidebar(List<?> list) {
+        try {
+            if (list == null || list.isEmpty()) return list;
+            Set<String> hidden = getSet(SIDEBAR_HIDDEN, Collections.emptySet());
+            if (hidden.isEmpty()) return list;
+            Context context = (Context) Class.forName("android.app.ActivityThread")
+                    .getMethod("currentApplication").invoke(null);
+            Set<Integer> titles = new HashSet<>();
+            for (String name : hidden) {
+                int id = context.getResources().getIdentifier(name, "string", context.getPackageName());
+                if (id != 0) titles.add(id);
+            }
+
+            List<Object> filtered = new ArrayList<>(list.size());
+            boolean inHiddenSection = false;
+            for (Object item : list) {
+                if (item == null) {
+                    filtered.add(null);
+                    continue;
+                }
+                String header = headerOf(item);
+                if (header != null) inHiddenSection = hidden.contains(header);
+                if (inHiddenSection) continue;
+                if (header == null && hasTitle(item, titles)) continue;
+                filtered.add(item);
+            }
+            return filtered.size() == list.size() ? list : filtered;
+        } catch (Exception ex) {
+            Log.e(TAG, "filterSidebar failure", ex);
+            return list;
+        }
+    }
+
+    private static boolean hasTitle(Object item, Set<Integer> titles) {
+        if (titles.isEmpty()) return false;
+        for (Field field : rowFields(item.getClass())) {
+            if (field.getType() != int.class) continue;
+            try {
+                if (titles.contains(field.getInt(item))) return true;
+            } catch (Exception ignored) {
+            }
+        }
+        return false;
+    }
+
+    // endregion
+
+    // region Settings screen
 
     /**
      * The settings screen being built, saved when its initialize() starts.
@@ -191,15 +419,13 @@ public final class HideKeywordContentPatch {
 
     /**
      * Injection point. Saves Morphe Patches' Reddit settings screen when it starts building.
-     *
-     * @param fragment The settings screen, a {@link PreferenceFragment}.
      */
     public static void setSettingsFragment(Object fragment) {
         settingsFragment = new WeakReference<>(fragment);
     }
 
     /**
-     * Injection point. Adds the Keyword filter section to the settings screen saved by
+     * Injection point. Adds this bundle's sections to the settings screen saved by
      * {@link #setSettingsFragment(Object)}, once the screen's own sections are built.
      */
     public static void addSettings() {
@@ -214,222 +440,299 @@ public final class HideKeywordContentPatch {
             Context context = preferenceFragment.getActivity();
             if (screen == null || context == null) return;
 
-            PreferenceCategory category = new PreferenceCategory(context);
-            category.setTitle("Keyword filter");
-            screen.addPreference(category);
+            PreferenceCategory posts = category(context, screen, "Keyword filter: posts");
+            item(context, posts, "Keywords to hide", () -> rulesSummary(getString(POST_RULES, "")),
+                    p -> editRules(context, p, POST_RULES, "Keywords to hide"));
+            item(context, posts, "Keywords apply to", HideKeywordContentPatch::fieldsSummary,
+                    p -> chooseSet(context, p, "Keywords apply to", FIELDS, FIELD_KEYS, FIELD_LABELS, fields(),
+                            HideKeywordContentPatch::fieldsSummary));
+            for (int i = 0; i < TYPE_KEYS.length; i++) {
+                String key = TYPE_KEYS[i];
+                String label = TYPE_LABELS[i];
+                item(context, posts, label, () -> modeLabel(mode(key)), p -> chooseMode(context, p, key, label));
+            }
+            item(context, posts, "Score (upvotes)", () -> rangeSummary(POST_SCORE_MIN, POST_SCORE_MAX),
+                    p -> editRange(context, p, "Score (upvotes)", POST_SCORE_MIN, POST_SCORE_MAX));
+            item(context, posts, "Number of comments", () -> rangeSummary(POST_COMMENTS_MIN, POST_COMMENTS_MAX),
+                    p -> editRange(context, p, "Number of comments", POST_COMMENTS_MIN, POST_COMMENTS_MAX));
+            item(context, posts, "Hide communities by topic", HideKeywordContentPatch::topicsSummary,
+                    p -> chooseTopics(context, p));
+            item(context, posts, "Where post filters apply", HideKeywordContentPatch::placesSummary,
+                    p -> chooseSet(context, p, "Where post filters apply", PLACES, PLACE_KEYS, PLACE_LABELS, places(),
+                            HideKeywordContentPatch::placesSummary));
 
-            Preference keywords = new Preference(context);
-            keywords.setTitle("Keywords to hide");
-            keywords.setSummary(summary(getRulesText()));
-            keywords.setOnPreferenceClickListener(preference -> {
-                showEditor(context, preference);
-                return true;
-            });
-            category.addPreference(keywords);
-            Log.i(TAG, "addSettings: added the Keyword filter section");
+            PreferenceCategory comments = category(context, screen, "Keyword filter: comments");
+            item(context, comments, "Comment keywords to hide", () -> rulesSummary(getString(COMMENT_RULES, "")),
+                    p -> editRules(context, p, COMMENT_RULES, "Comment keywords to hide"));
+            item(context, comments, "Comment score (upvotes)", () -> rangeSummary(COMMENT_SCORE_MIN, COMMENT_SCORE_MAX),
+                    p -> editRange(context, p, "Comment score (upvotes)", COMMENT_SCORE_MIN, COMMENT_SCORE_MAX));
+
+            PreferenceCategory navigation = category(context, screen, "Keyword filter: navigation");
+            item(context, navigation, "Hide the Inbox tab", () -> onOff(HIDE_INBOX_TAB,
+                            "On: the bottom bar's Inbox (notifications and messages) tab is hidden; restart the app"),
+                    p -> toggle(p, HIDE_INBOX_TAB,
+                            "On: the bottom bar's Inbox (notifications and messages) tab is hidden; restart the app"));
+            item(context, navigation, "Hide sidebar rows", HideKeywordContentPatch::sidebarSummary,
+                    p -> chooseSet(context, p, "Hide sidebar rows", SIDEBAR_HIDDEN, SIDEBAR_KEYS, SIDEBAR_LABELS,
+                            getSet(SIDEBAR_HIDDEN, Collections.emptySet()), HideKeywordContentPatch::sidebarSummary));
+            item(context, navigation, "Hide the sidebar button's badge", () -> onOff(HIDE_MENU_BADGE,
+                            "On: no orange dot on the sidebar (three-line) button; restart the app"),
+                    p -> toggle(p, HIDE_MENU_BADGE, "On: no orange dot on the sidebar (three-line) button; restart the app"));
+
+            PreferenceCategory other = category(context, screen, "Keyword filter: other");
+            item(context, other, "Debug logging", () -> getBoolean(DEBUG)
+                            ? "On: logs each post read and why it is hidden (tag RedditKeywordFilter)" : "Off",
+                    p -> {
+                        putBoolean(DEBUG, !getBoolean(DEBUG));
+                        p.setSummary(getBoolean(DEBUG)
+                                ? "On: logs each post read and why it is hidden (tag RedditKeywordFilter)" : "Off");
+                    });
+
+            Log.i(TAG, "addSettings: added the Keyword filter sections");
         } catch (Exception ex) {
             Log.e(TAG, "addSettings failure", ex);
         }
     }
 
-    private static void showEditor(Context context, Preference preference) {
+    private interface Summary {
+        String get();
+    }
+
+    private interface Click {
+        void on(Preference preference);
+    }
+
+    private static PreferenceCategory category(Context context, PreferenceScreen screen, String title) {
+        PreferenceCategory category = new PreferenceCategory(context);
+        category.setTitle(title);
+        screen.addPreference(category);
+        return category;
+    }
+
+    private static void item(Context context, PreferenceCategory category, String title, Summary summary, Click click) {
+        Preference preference = new Preference(context);
+        preference.setTitle(title);
+        preference.setSummary(summary.get());
+        preference.setOnPreferenceClickListener(p -> {
+            try {
+                click.on(p);
+            } catch (Exception ex) {
+                Log.e(TAG, "Settings dialog failure", ex);
+            }
+            return true;
+        });
+        category.addPreference(preference);
+    }
+
+    private static String onOff(String key, String on) {
+        return getBoolean(key) ? on : "Off";
+    }
+
+    private static void toggle(Preference preference, String key, String on) {
+        putBoolean(key, !getBoolean(key));
+        preference.setSummary(onOff(key, on));
+    }
+
+    private static String sidebarSummary() {
+        return labelsOf(getSet(SIDEBAR_HIDDEN, Collections.emptySet()), SIDEBAR_KEYS, SIDEBAR_LABELS, "None hidden");
+    }
+
+    private static String rulesSummary(String text) {
+        int count = new Rules(text).size();
+        return count == 0 ? "No rules" : count + (count == 1 ? " rule" : " rules");
+    }
+
+    private static String fieldsSummary() {
+        return labelsOf(fields(), FIELD_KEYS, FIELD_LABELS, "Nothing (keyword rules match no post)");
+    }
+
+    private static String placesSummary() {
+        return labelsOf(places(), PLACE_KEYS, PLACE_LABELS, "Nowhere (post filters are off)");
+    }
+
+    private static String topicsSummary() {
+        Set<String> topics = getSet(TOPICS, Collections.emptySet());
+        List<String> names = new ArrayList<>();
+        for (int i = 0; i < Topics.KEYS.length; i++) {
+            if (topics.contains(Topics.KEYS[i])) names.add(Topics.LABELS[i]);
+        }
+        int extra = Filter.topicExtra().size();
+        if (extra > 0) names.add(extra + (extra == 1 ? " community" : " communities") + " of your own list");
+        return names.isEmpty() ? "Off" : String.join(", ", names);
+    }
+
+    private static String labelsOf(Set<String> chosen, String[] keys, String[] labels, String none) {
+        List<String> names = new ArrayList<>();
+        for (int i = 0; i < keys.length; i++) {
+            if (chosen.contains(keys[i])) names.add(labels[i]);
+        }
+        return names.isEmpty() ? none : String.join(", ", names);
+    }
+
+    private static String rangeSummary(String minKey, String maxKey) {
+        Long min = bound(minKey);
+        Long max = bound(maxKey);
+        if (min == null && max == null) return "Any (no filter)";
+        if (max == null) return "Hide below " + min;
+        if (min == null) return "Hide above " + max;
+        return "Show " + min + " to " + max + " only";
+    }
+
+    private static int dp(Context context, int value) {
+        return (int) (value * context.getResources().getDisplayMetrics().density);
+    }
+
+    private static void editRules(Context context, Preference preference, String key, String title) {
         EditText editor = new EditText(context);
         editor.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
         editor.setSingleLine(false);
         editor.setMinLines(4);
-        editor.setText(getRulesText());
-        editor.setHint("r/community\nu/account\n\"whole phrase\"\nany text");
+        editor.setText(getString(key, ""));
+        editor.setHint("r/community\nu/account\nflair:Meme\n\"whole phrase\"\nany text");
 
-        int padding = (int) (20 * context.getResources().getDisplayMetrics().density);
-        FrameLayout frame = new FrameLayout(context);
-        frame.setPadding(padding, padding / 2, padding, 0);
-        frame.addView(editor);
+        TextView help = new TextView(context);
+        help.setText(key.equals(COMMENT_RULES)
+                ? "One rule a line: u/name hides an account's comments, \"phrase\" matches whole words, and any "
+                + "other text matches anywhere in a comment. Start a rule with r/name: to limit it to a community."
+                : RULE_HELP);
+        help.setTextIsSelectable(true);
+
+        LinearLayout layout = new LinearLayout(context);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(dp(context, 20), dp(context, 8), dp(context, 20), 0);
+        layout.addView(help);
+        layout.addView(editor);
 
         new AlertDialog.Builder(context)
-                .setTitle("Keywords to hide")
-                .setMessage("One rule a line. r/name hides a community, u/name an account, "
-                        + "\"phrase\" whole words, and any other text hides posts containing it.")
-                .setView(frame)
+                .setTitle(title)
+                .setView(layout)
                 .setPositiveButton(android.R.string.ok, (dialog, which) -> {
                     String text = editor.getText().toString().trim();
-                    SharedPreferences current = getPreferences();
-                    if (current != null) current.edit().putString(KEY_RULES, text).apply();
-                    preference.setSummary(summary(text));
+                    putString(key, text);
+                    preference.setSummary(rulesSummary(text));
                 })
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();
     }
 
-    // endregion
-
-    // region Matching
-
-    /**
-     * The value printed after {@code label} in a data class's toString(), lowercased, with {@code prefix} removed.
-     */
-    static String valueOf(String text, String label, String prefix) {
-        String key = ", " + label + "=";
-        int start = text.indexOf(key);
-        if (start < 0) {
-            key = "(" + label + "=";
-            start = text.indexOf(key);
-            if (start < 0) return "";
-        }
-        start += key.length();
-
-        Matcher next = NEXT_LABEL.matcher(text);
-        int end = next.find(start) ? next.start() : text.lastIndexOf(')');
-        if (end < start) end = text.length();
-
-        String value = text.substring(start, end).trim().toLowerCase(Locale.ROOT);
-        if (value.equals("null")) return "";
-        return value.startsWith(prefix) ? value.substring(prefix.length()) : value;
+    private static void chooseSet(Context context, Preference preference, String title, String key, String[] keys,
+                                  String[] labels, Set<String> current, Summary summary) {
+        boolean[] checked = new boolean[keys.length];
+        for (int i = 0; i < keys.length; i++) checked[i] = current.contains(keys[i]);
+        new AlertDialog.Builder(context)
+                .setTitle(title)
+                .setMultiChoiceItems(labels, checked, (dialog, which, isChecked) -> checked[which] = isChecked)
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                    Set<String> chosen = new HashSet<>();
+                    for (int i = 0; i < keys.length; i++) if (checked[i]) chosen.add(keys[i]);
+                    putSet(key, chosen);
+                    preference.setSummary(summary.get());
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
     }
 
-    private static boolean matches(Rules rules, String text, String community, String author) {
-        if (!community.isEmpty() && rules.communities.contains(community)) return true;
-        if (!author.isEmpty() && rules.authors.contains(author)) return true;
-
-        for (String value : new String[]{text, community, author}) {
-            if (value.isEmpty()) continue;
-            for (String phrase : rules.phrases) {
-                if (value.contains(phrase)) return true;
-            }
-            for (Pattern pattern : rules.wholeWords) {
-                if (pattern.matcher(value).find()) return true;
-            }
-        }
-        return false;
+    private static void chooseMode(Context context, Preference preference, String key, String title) {
+        int current = 0;
+        for (int i = 0; i < MODE_KEYS.length; i++) if (MODE_KEYS[i].equals(mode(key))) current = i;
+        new AlertDialog.Builder(context)
+                .setTitle(title)
+                .setSingleChoiceItems(MODE_LABELS, current, (dialog, which) -> {
+                    putString(key, MODE_KEYS[which]);
+                    preference.setSummary(MODE_LABELS[which]);
+                    dialog.dismiss();
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
     }
 
-    /**
-     * The instance fields of a post container class whose type may hold a list of parts.
-     */
-    private static List<Field> partFields(Class<?> type) {
-        List<Field> fields = PART_FIELDS.get(type);
-        if (fields != null) return fields;
+    private static void editRange(Context context, Preference preference, String title, String minKey, String maxKey) {
+        EditText min = new EditText(context);
+        min.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_SIGNED);
+        min.setHint("Lowest shown (blank: no lower bound)");
+        min.setText(getString(minKey, ""));
+        EditText max = new EditText(context);
+        max.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_SIGNED);
+        max.setHint("Highest shown (blank: no upper bound)");
+        max.setText(getString(maxKey, ""));
 
-        fields = new ArrayList<>();
-        for (Field field : type.getDeclaredFields()) {
-            Class<?> fieldType = field.getType();
-            if (Modifier.isStatic(field.getModifiers()) || fieldType.isPrimitive()
-                    || fieldType == String.class || fieldType.isEnum()) continue;
-            field.setAccessible(true);
-            fields.add(field);
-        }
-        PART_FIELDS.put(type, fields);
-        return fields;
+        TextView help = new TextView(context);
+        help.setText("Posts outside this range are hidden. Leave a box blank for no bound. A count the app "
+                + "shows rounded (for example 1.2k) is compared as 1,200.");
+
+        LinearLayout layout = new LinearLayout(context);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(dp(context, 20), dp(context, 8), dp(context, 20), 0);
+        layout.addView(help);
+        layout.addView(min);
+        layout.addView(max);
+
+        new AlertDialog.Builder(context)
+                .setTitle(title)
+                .setView(layout)
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                    putString(minKey, min.getText().toString().trim());
+                    putString(maxKey, max.getText().toString().trim());
+                    preference.setSummary(rangeSummary(minKey, maxKey));
+                })
+                .setNeutralButton("Clear", (dialog, which) -> {
+                    putString(minKey, "");
+                    putString(maxKey, "");
+                    preference.setSummary(rangeSummary(minKey, maxKey));
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
     }
 
-    private static boolean shouldHide(Rules rules, Object element) throws IllegalAccessException {
-        if (element instanceof ClassicPost) {
-            String text = element.toString();
-            return matches(rules, valueOf(text, "title", ""), valueOf(text, "subredditName", "r/"), "");
+    private static void chooseTopics(Context context, Preference preference) {
+        Set<String> current = getSet(TOPICS, Collections.emptySet());
+        boolean[] checked = new boolean[Topics.KEYS.length];
+        String[] labels = new String[Topics.KEYS.length];
+        for (int i = 0; i < Topics.KEYS.length; i++) {
+            checked[i] = current.contains(Topics.KEYS[i]);
+            labels[i] = Topics.LABELS[i] + "  (names containing " + Topics.patterns(i) + ")";
         }
-
-        if (!(element instanceof PostContainer)) return false;
-
-        StringBuilder text = new StringBuilder();
-        String community = "";
-        String author = "";
-
-        for (Field field : partFields(element.getClass())) {
-            Object value = field.get(element);
-            if (!(value instanceof Iterable)) continue;
-
-            for (Object part : (Iterable<?>) value) {
-                if (part instanceof TitleElement) {
-                    text.append(valueOf(part.toString(), "title", "")).append('\n');
-                } else if (part instanceof TextElement) {
-                    text.append(valueOf(part.toString(), "text", "")).append('\n');
-                } else if (part instanceof HeaderElement) {
-                    String header = part.toString();
-                    author = valueOf(header, "authorNameWithPrefix", "u/");
-                    // The details name the community in feeds, and the author on a community's own page.
-                    String details = valueOf(header, "details", "");
-                    if (details.startsWith("r/")) community = details.substring(2);
-                    else if (author.isEmpty() && details.startsWith("u/")) author = details.substring(2);
-                } else if (part instanceof PostContainer || part instanceof ClassicPost) {
-                    // A crosspost nests the original post.
-                    if (shouldHide(rules, part)) return true;
-                }
-            }
-        }
-
-        return matches(rules, text.toString().trim(), community, author);
+        new AlertDialog.Builder(context)
+                .setTitle("Hide communities by topic")
+                .setMultiChoiceItems(labels, checked, (dialog, which, isChecked) -> checked[which] = isChecked)
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                    Set<String> chosen = new HashSet<>();
+                    for (int i = 0; i < Topics.KEYS.length; i++) if (checked[i]) chosen.add(Topics.KEYS[i]);
+                    putSet(TOPICS, chosen);
+                    preference.setSummary(topicsSummary());
+                })
+                .setNeutralButton("Your own list", (dialog, which) -> editTopicExtra(context, preference))
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
     }
 
-    /**
-     * Injection point. Filters each page of a feed (Home, Popular, Latest, a community, a custom feed).
-     */
-    public static List<?> filterFeedElements(List<?> list) {
-        try {
-            Rules rules = getRules();
-            if (list == null || rules.isEmpty()) return list;
+    private static void editTopicExtra(Context context, Preference preference) {
+        EditText editor = new EditText(context);
+        editor.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        editor.setSingleLine(false);
+        editor.setMinLines(4);
+        editor.setText(getString(TOPIC_EXTRA, ""));
+        editor.setHint("r/community");
 
-            List<Object> filtered = new ArrayList<>(list.size());
-            for (Object element : list) {
-                if (!shouldHide(rules, element)) filtered.add(element);
-            }
-            Log.i(TAG, "filterFeedElements: hid " + (list.size() - filtered.size()) + " of " + list.size());
-            return filtered.size() == list.size() ? list : filtered;
-        } catch (Exception ex) {
-            Log.e(TAG, "filterFeedElements failure", ex);
-            return list;
-        }
-    }
+        TextView help = new TextView(context);
+        help.setText("Communities to hide, one a line, in addition to the topics chosen. Names containing "
+                + Topics.exceptions() + " are never hidden by a topic, only by this list.");
 
-    private static String linkValue(Method getter, Object link, String prefix) throws Exception {
-        if (getter == null) return "";
-        Object value = getter.invoke(link);
-        if (value == null) return "";
-        String text = value.toString().trim().toLowerCase(Locale.ROOT);
-        return text.startsWith(prefix) ? text.substring(prefix.length()) : text;
-    }
+        LinearLayout layout = new LinearLayout(context);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(dp(context, 20), dp(context, 8), dp(context, 20), 0);
+        layout.addView(help);
+        layout.addView(editor);
 
-    private static Method[] linkGetters(Class<?> type) {
-        Method[] getters = LINK_GETTERS.get(type);
-        if (getters != null) return getters;
-
-        getters = new Method[LINK_GETTER_NAMES.length];
-        for (int i = 0; i < getters.length; i++) {
-            try {
-                getters[i] = type.getMethod(LINK_GETTER_NAMES[i]);
-            } catch (NoSuchMethodException ignored) {
-                // The item has no such value.
-            }
-        }
-        LINK_GETTERS.put(type, getters);
-        return getters;
-    }
-
-    /**
-     * Injection point. Filters the older post listings (search results, profiles).
-     */
-    public static List<?> filterLinks(List<?> list) {
-        try {
-            Rules rules = getRules();
-            if (list == null || rules.isEmpty()) return list;
-
-            List<Object> filtered = new ArrayList<>(list.size());
-            for (Object item : list) {
-                if (item != null && item.getClass().getName().equals("com.reddit.domain.model.Link")) {
-                    Method[] getters = linkGetters(item.getClass());
-                    if (matches(rules,
-                            linkValue(getters[0], item, "") + "\n" + linkValue(getters[1], item, ""),
-                            linkValue(getters[2], item, "r/"),
-                            linkValue(getters[3], item, "u/"))) {
-                        continue;
-                    }
-                }
-                filtered.add(item);
-            }
-            Log.i(TAG, "filterLinks: hid " + (list.size() - filtered.size()) + " of " + list.size());
-            return filtered.size() == list.size() ? list : filtered;
-        } catch (Exception ex) {
-            Log.e(TAG, "filterLinks failure", ex);
-            return list;
-        }
+        new AlertDialog.Builder(context)
+                .setTitle("Your own list")
+                .setView(layout)
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                    putString(TOPIC_EXTRA, editor.getText().toString().trim());
+                    preference.setSummary(topicsSummary());
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
     }
 
     // endregion

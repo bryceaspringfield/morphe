@@ -37,33 +37,6 @@ internal object FeedPagingDataSourceLoadFingerprint : Fingerprint(
 )
 
 /**
- * The toString() of a feed element class, found by the label it starts with.
- */
-internal class FeedElementToStringFingerprint(label: String) : Fingerprint(
-    name = "toString",
-    returnType = "Ljava/lang/String;",
-    parameters = listOf(),
-    filters = listOf(
-        string(label)
-    )
-)
-
-/** A post in the card view, holding its title, header, body preview, and media as parts. */
-internal val PostElementFingerprint = FeedElementToStringFingerprint("PostElement(linkId=")
-
-/** A post in the classic view. */
-internal val ClassicPostElementFingerprint = FeedElementToStringFingerprint("ClassicPostElement(linkId=")
-
-/** A post's header: its community, author, and age. */
-internal val MetadataHeaderElementFingerprint = FeedElementToStringFingerprint("MetadataHeaderElement(linkId=")
-
-/** A post's title. */
-internal val PostTitleElementFingerprint = FeedElementToStringFingerprint("PostTitleElement(linkId=")
-
-/** A post's body text preview. */
-internal val PreviewTextElementFingerprint = FeedElementToStringFingerprint("PreviewTextElement(linkId=")
-
-/**
  * The older post listings' constructor (search results, profiles), which stores the posts.
  * Morphe Patches' ad filter hooks the same constructor.
  */
