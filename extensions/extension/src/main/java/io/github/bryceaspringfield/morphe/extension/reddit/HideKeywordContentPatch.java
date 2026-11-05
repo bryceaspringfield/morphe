@@ -10,6 +10,7 @@ import android.preference.Preference;
 import android.preference.PreferenceCategory;
 import android.preference.PreferenceFragment;
 import android.preference.PreferenceScreen;
+import android.preference.SwitchPreference;
 import android.text.InputType;
 import android.util.Log;
 import android.widget.EditText;
@@ -19,6 +20,7 @@ import android.widget.TextView;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -34,17 +36,6 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @SuppressWarnings({"unused", "deprecation"})
 public final class HideKeywordContentPatch {
-
-    private static final String RULE_HELP = "One rule a line:\n"
-            + "  r/name  hides a community\n"
-            + "  u/name  hides an account\n"
-            + "  flair:Meme  hides posts with that flair\n"
-            + "  !flair:Meme  hides posts without it\n"
-            + "  \"phrase\"  matches whole words\n"
-            + "  any text  matches anywhere\n"
-            + "Start a rule with communities and a colon to limit it to them, for example\n"
-            + "  r/pics: cat\n"
-            + "  r/news, r/worldnews: !flair:Politics";
 
     // region Feed hooks
 
@@ -509,304 +500,11 @@ public final class HideKeywordContentPatch {
                 Log.e(TAG, "addSettings: no settings screen saved, found " + fragment);
                 return;
             }
-            PreferenceFragment preferenceFragment = (PreferenceFragment) fragment;
-            PreferenceScreen screen = preferenceFragment.getPreferenceScreen();
-            Context context = preferenceFragment.getActivity();
-            if (screen == null || context == null) return;
-
-            PreferenceCategory posts = category(context, screen, "Keyword filter: posts");
-            item(context, posts, "Keywords to hide", () -> rulesSummary(getString(POST_RULES, "")),
-                    p -> editRules(context, p, POST_RULES, "Keywords to hide"));
-            item(context, posts, "Keywords apply to", HideKeywordContentPatch::fieldsSummary,
-                    p -> chooseSet(context, p, "Keywords apply to", FIELDS, FIELD_KEYS, FIELD_LABELS, fields(),
-                            HideKeywordContentPatch::fieldsSummary));
-            for (int i = 0; i < TYPE_KEYS.length; i++) {
-                String key = TYPE_KEYS[i];
-                String label = TYPE_LABELS[i];
-                item(context, posts, label, () -> modeLabel(mode(key)), p -> chooseMode(context, p, key, label));
-            }
-            item(context, posts, "Score (upvotes)", () -> rangeSummary(POST_SCORE_MIN, POST_SCORE_MAX),
-                    p -> editRange(context, p, "Score (upvotes)", POST_SCORE_MIN, POST_SCORE_MAX));
-            item(context, posts, "Number of comments", () -> rangeSummary(POST_COMMENTS_MIN, POST_COMMENTS_MAX),
-                    p -> editRange(context, p, "Number of comments", POST_COMMENTS_MIN, POST_COMMENTS_MAX));
-            item(context, posts, "Hide communities by topic", HideKeywordContentPatch::topicsSummary,
-                    p -> chooseTopics(context, p));
-            item(context, posts, "Where post filters apply", HideKeywordContentPatch::placesSummary,
-                    p -> chooseSet(context, p, "Where post filters apply", PLACES, PLACE_KEYS, PLACE_LABELS, places(),
-                            HideKeywordContentPatch::placesSummary));
-
-            PreferenceCategory comments = category(context, screen, "Keyword filter: comments");
-            item(context, comments, "Comment keywords to hide", () -> rulesSummary(getString(COMMENT_RULES, "")),
-                    p -> editRules(context, p, COMMENT_RULES, "Comment keywords to hide"));
-            item(context, comments, "Comment score (upvotes)", () -> rangeSummary(COMMENT_SCORE_MIN, COMMENT_SCORE_MAX),
-                    p -> editRange(context, p, "Comment score (upvotes)", COMMENT_SCORE_MIN, COMMENT_SCORE_MAX));
-
-            PreferenceCategory navigation = category(context, screen, "Keyword filter: navigation");
-            item(context, navigation, "Hide the Inbox tab", () -> onOff(HIDE_INBOX_TAB,
-                            "On: the bottom bar's Inbox (notifications and messages) tab is hidden; restart the app"),
-                    p -> toggle(p, HIDE_INBOX_TAB,
-                            "On: the bottom bar's Inbox (notifications and messages) tab is hidden; restart the app"));
-            item(context, navigation, "Hide sidebar rows", HideKeywordContentPatch::sidebarSummary,
-                    p -> chooseSet(context, p, "Hide sidebar rows", SIDEBAR_HIDDEN, SIDEBAR_KEYS, SIDEBAR_LABELS,
-                            getSet(SIDEBAR_HIDDEN, Collections.emptySet()), HideKeywordContentPatch::sidebarSummary));
-            item(context, navigation, "Hide the sidebar button's badge", () -> onOff(HIDE_MENU_BADGE,
-                            "On: no orange dot on the sidebar (three-line) button; restart the app"),
-                    p -> toggle(p, HIDE_MENU_BADGE, "On: no orange dot on the sidebar (three-line) button; restart the app"));
-
-            PreferenceCategory other = category(context, screen, "Keyword filter: other");
-            item(context, other, "Debug logging", () -> getBoolean(DEBUG)
-                            ? "On: logs each post read and why it is hidden (tag RedditKeywordFilter)" : "Off",
-                    p -> {
-                        putBoolean(DEBUG, !getBoolean(DEBUG));
-                        p.setSummary(getBoolean(DEBUG)
-                                ? "On: logs each post read and why it is hidden (tag RedditKeywordFilter)" : "Off");
-                    });
-
-            Log.i(TAG, "addSettings: added the Keyword filter sections");
+            SettingsUi.add((PreferenceFragment) fragment);
+            Log.i(TAG, "addSettings: added the Keyword filter settings");
         } catch (Exception ex) {
             Log.e(TAG, "addSettings failure", ex);
         }
-    }
-
-    private interface Summary {
-        String get();
-    }
-
-    private interface Click {
-        void on(Preference preference);
-    }
-
-    private static PreferenceCategory category(Context context, PreferenceScreen screen, String title) {
-        PreferenceCategory category = new PreferenceCategory(context);
-        category.setTitle(title);
-        screen.addPreference(category);
-        return category;
-    }
-
-    private static void item(Context context, PreferenceCategory category, String title, Summary summary, Click click) {
-        Preference preference = new Preference(context);
-        preference.setTitle(title);
-        preference.setSummary(summary.get());
-        preference.setOnPreferenceClickListener(p -> {
-            try {
-                click.on(p);
-            } catch (Exception ex) {
-                Log.e(TAG, "Settings dialog failure", ex);
-            }
-            return true;
-        });
-        category.addPreference(preference);
-    }
-
-    private static String onOff(String key, String on) {
-        return getBoolean(key) ? on : "Off";
-    }
-
-    private static void toggle(Preference preference, String key, String on) {
-        putBoolean(key, !getBoolean(key));
-        preference.setSummary(onOff(key, on));
-    }
-
-    private static String sidebarSummary() {
-        return labelsOf(getSet(SIDEBAR_HIDDEN, Collections.emptySet()), SIDEBAR_KEYS, SIDEBAR_LABELS, "None hidden");
-    }
-
-    private static String rulesSummary(String text) {
-        int count = new Rules(text).size();
-        return count == 0 ? "No rules" : count + (count == 1 ? " rule" : " rules");
-    }
-
-    private static String fieldsSummary() {
-        return labelsOf(fields(), FIELD_KEYS, FIELD_LABELS, "Nothing (keyword rules match no post)");
-    }
-
-    private static String placesSummary() {
-        return labelsOf(places(), PLACE_KEYS, PLACE_LABELS, "Nowhere (post filters are off)");
-    }
-
-    private static String topicsSummary() {
-        Set<String> topics = getSet(TOPICS, Collections.emptySet());
-        List<String> names = new ArrayList<>();
-        for (int i = 0; i < Topics.KEYS.length; i++) {
-            if (topics.contains(Topics.KEYS[i])) names.add(Topics.LABELS[i]);
-        }
-        int extra = Filter.topicExtra().size();
-        if (extra > 0) names.add(extra + (extra == 1 ? " community" : " communities") + " of your own list");
-        return names.isEmpty() ? "Off" : String.join(", ", names);
-    }
-
-    private static String labelsOf(Set<String> chosen, String[] keys, String[] labels, String none) {
-        List<String> names = new ArrayList<>();
-        for (int i = 0; i < keys.length; i++) {
-            if (chosen.contains(keys[i])) names.add(labels[i]);
-        }
-        return names.isEmpty() ? none : String.join(", ", names);
-    }
-
-    private static String rangeSummary(String minKey, String maxKey) {
-        Long min = bound(minKey);
-        Long max = bound(maxKey);
-        if (min == null && max == null) return "Any (no filter)";
-        if (max == null) return "Hide below " + min;
-        if (min == null) return "Hide above " + max;
-        return "Show " + min + " to " + max + " only";
-    }
-
-    private static int dp(Context context, int value) {
-        return (int) (value * context.getResources().getDisplayMetrics().density);
-    }
-
-    private static void editRules(Context context, Preference preference, String key, String title) {
-        EditText editor = new EditText(context);
-        editor.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-        editor.setSingleLine(false);
-        editor.setMinLines(4);
-        editor.setText(getString(key, ""));
-        editor.setHint("r/community\nu/account\nflair:Meme\n\"whole phrase\"\nany text");
-
-        TextView help = new TextView(context);
-        help.setText(key.equals(COMMENT_RULES)
-                ? "One rule a line: u/name hides an account's comments, \"phrase\" matches whole words, and any "
-                + "other text matches anywhere in a comment. Start a rule with r/name: to limit it to a community."
-                : RULE_HELP);
-        help.setTextIsSelectable(true);
-
-        LinearLayout layout = new LinearLayout(context);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(dp(context, 20), dp(context, 8), dp(context, 20), 0);
-        layout.addView(help);
-        layout.addView(editor);
-
-        new AlertDialog.Builder(context)
-                .setTitle(title)
-                .setView(layout)
-                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                    String text = editor.getText().toString().trim();
-                    putString(key, text);
-                    preference.setSummary(rulesSummary(text));
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
-    }
-
-    private static void chooseSet(Context context, Preference preference, String title, String key, String[] keys,
-                                  String[] labels, Set<String> current, Summary summary) {
-        boolean[] checked = new boolean[keys.length];
-        for (int i = 0; i < keys.length; i++) checked[i] = current.contains(keys[i]);
-        new AlertDialog.Builder(context)
-                .setTitle(title)
-                .setMultiChoiceItems(labels, checked, (dialog, which, isChecked) -> checked[which] = isChecked)
-                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                    Set<String> chosen = new HashSet<>();
-                    for (int i = 0; i < keys.length; i++) if (checked[i]) chosen.add(keys[i]);
-                    putSet(key, chosen);
-                    preference.setSummary(summary.get());
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
-    }
-
-    private static void chooseMode(Context context, Preference preference, String key, String title) {
-        int current = 0;
-        for (int i = 0; i < MODE_KEYS.length; i++) if (MODE_KEYS[i].equals(mode(key))) current = i;
-        new AlertDialog.Builder(context)
-                .setTitle(title)
-                .setSingleChoiceItems(MODE_LABELS, current, (dialog, which) -> {
-                    putString(key, MODE_KEYS[which]);
-                    preference.setSummary(MODE_LABELS[which]);
-                    dialog.dismiss();
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
-    }
-
-    private static void editRange(Context context, Preference preference, String title, String minKey, String maxKey) {
-        EditText min = new EditText(context);
-        min.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_SIGNED);
-        min.setHint("Lowest shown (blank: no lower bound)");
-        min.setText(getString(minKey, ""));
-        EditText max = new EditText(context);
-        max.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_SIGNED);
-        max.setHint("Highest shown (blank: no upper bound)");
-        max.setText(getString(maxKey, ""));
-
-        TextView help = new TextView(context);
-        help.setText("Posts outside this range are hidden. Leave a box blank for no bound. A count the app "
-                + "shows rounded (for example 1.2k) is compared as 1,200.");
-
-        LinearLayout layout = new LinearLayout(context);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(dp(context, 20), dp(context, 8), dp(context, 20), 0);
-        layout.addView(help);
-        layout.addView(min);
-        layout.addView(max);
-
-        new AlertDialog.Builder(context)
-                .setTitle(title)
-                .setView(layout)
-                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                    putString(minKey, min.getText().toString().trim());
-                    putString(maxKey, max.getText().toString().trim());
-                    preference.setSummary(rangeSummary(minKey, maxKey));
-                })
-                .setNeutralButton("Clear", (dialog, which) -> {
-                    putString(minKey, "");
-                    putString(maxKey, "");
-                    preference.setSummary(rangeSummary(minKey, maxKey));
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
-    }
-
-    private static void chooseTopics(Context context, Preference preference) {
-        Set<String> current = getSet(TOPICS, Collections.emptySet());
-        boolean[] checked = new boolean[Topics.KEYS.length];
-        String[] labels = new String[Topics.KEYS.length];
-        for (int i = 0; i < Topics.KEYS.length; i++) {
-            checked[i] = current.contains(Topics.KEYS[i]);
-            labels[i] = Topics.LABELS[i] + "  (names containing " + Topics.patterns(i) + ")";
-        }
-        new AlertDialog.Builder(context)
-                .setTitle("Hide communities by topic")
-                .setMultiChoiceItems(labels, checked, (dialog, which, isChecked) -> checked[which] = isChecked)
-                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                    Set<String> chosen = new HashSet<>();
-                    for (int i = 0; i < Topics.KEYS.length; i++) if (checked[i]) chosen.add(Topics.KEYS[i]);
-                    putSet(TOPICS, chosen);
-                    preference.setSummary(topicsSummary());
-                })
-                .setNeutralButton("Your own list", (dialog, which) -> editTopicExtra(context, preference))
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
-    }
-
-    private static void editTopicExtra(Context context, Preference preference) {
-        EditText editor = new EditText(context);
-        editor.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-        editor.setSingleLine(false);
-        editor.setMinLines(4);
-        editor.setText(getString(TOPIC_EXTRA, ""));
-        editor.setHint("r/community");
-
-        TextView help = new TextView(context);
-        help.setText("Communities to hide, one a line, in addition to the topics chosen. Names containing "
-                + Topics.exceptions() + " are never hidden by a topic, only by this list.");
-
-        LinearLayout layout = new LinearLayout(context);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(dp(context, 20), dp(context, 8), dp(context, 20), 0);
-        layout.addView(help);
-        layout.addView(editor);
-
-        new AlertDialog.Builder(context)
-                .setTitle("Your own list")
-                .setView(layout)
-                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                    putString(TOPIC_EXTRA, editor.getText().toString().trim());
-                    preference.setSummary(topicsSummary());
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
     }
 
     // endregion

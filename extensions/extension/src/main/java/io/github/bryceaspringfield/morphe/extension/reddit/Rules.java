@@ -1,6 +1,7 @@
 package io.github.bryceaspringfield.morphe.extension.reddit;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -38,8 +39,18 @@ final class Rules {
                     : null;
         }
 
-        boolean inScope(String community) {
-            return scope.isEmpty() || scope.contains(community);
+        /**
+         * Whether the rule applies to an item of these communities and accounts (names without r/ or u/).
+         */
+        boolean inScope(Collection<String> communities, Collection<String> accounts) {
+            if (scope.isEmpty()) return true;
+            for (String community : communities) {
+                if (scope.contains("r/" + community)) return true;
+            }
+            for (String account : accounts) {
+                if (scope.contains("u/" + account)) return true;
+            }
+            return false;
         }
 
         boolean matchesText(String text) {
@@ -64,25 +75,13 @@ final class Rules {
         String lower = line.toLowerCase(Locale.ROOT);
         Set<String> scope = new HashSet<>();
 
-        // Communities before a colon limit the rule to them.
-        int colon = lower.indexOf(':');
-        if (colon > 2 && lower.startsWith("r/") && !lower.substring(0, colon).endsWith("flair")) {
-            boolean allCommunities = true;
-            Set<String> names = new HashSet<>();
-            for (String part : lower.substring(0, colon).split(",")) {
-                String name = part.trim();
-                if (name.length() > 2 && name.startsWith("r/") && !name.contains(" ")) {
-                    names.add(community(name.substring(2)));
-                } else {
-                    allCommunities = false;
-                }
-            }
-            if (allCommunities && !names.isEmpty()) {
-                scope = names;
-                line = line.substring(colon + 1).trim();
-                lower = lower.substring(colon + 1).trim();
-                if (lower.isEmpty()) return new Rule(Kind.COMMUNITY, "", scope);
-            }
+        // Communities and accounts before a colon limit the rule to them.
+        Prefix prefix = prefix(line);
+        if (prefix != null) {
+            scope = new HashSet<>(prefix.scopes);
+            line = prefix.rest;
+            lower = line.toLowerCase(Locale.ROOT);
+            if (lower.isEmpty()) return new Rule(Kind.COMMUNITY, "", scope);
         }
 
         if (lower.startsWith("!flair:") && lower.length() > 7) {
@@ -101,6 +100,43 @@ final class Rules {
             return new Rule(Kind.PHRASE, lower.substring(1, lower.length() - 1), scope);
         }
         return new Rule(Kind.TEXT, lower, scope);
+    }
+
+    /**
+     * The communities and accounts a rule line starts with ("r/pics, u/name: cat"), as scope keys.
+     */
+    static final class Prefix {
+        final List<String> scopes;
+        final String rest;
+
+        Prefix(List<String> scopes, String rest) {
+            this.scopes = scopes;
+            this.rest = rest;
+        }
+    }
+
+    static Prefix prefix(String line) {
+        String lower = line.toLowerCase(Locale.ROOT);
+        int colon = lower.indexOf(':');
+        if (colon <= 2 || !(lower.startsWith("r/") || lower.startsWith("u/"))) return null;
+        String head = lower.substring(0, colon);
+        if (head.endsWith("flair")) return null;
+        List<String> scopes = new ArrayList<>();
+        for (String part : head.split(",")) {
+            String name = part.trim();
+            if (name.length() <= 2 || name.contains(" ") || !(name.startsWith("r/") || name.startsWith("u/"))) return null;
+            scopes.add(scopeKey(name));
+        }
+        return new Prefix(scopes, line.substring(colon + 1).trim());
+    }
+
+    /**
+     * A community or account as a scope key: "r/name" or "u/name", lowercase.
+     */
+    static String scopeKey(String name) {
+        name = name.trim().toLowerCase(Locale.ROOT);
+        if (name.startsWith("u/")) return "u/" + name.substring(2).trim();
+        return "r/" + community(name);
     }
 
     private static String unquote(String text) {

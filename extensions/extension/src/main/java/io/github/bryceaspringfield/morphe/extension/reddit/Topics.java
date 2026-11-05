@@ -10,14 +10,14 @@ import java.util.Set;
  */
 final class Topics {
 
-    static final String[] KEYS = {"zionism", "nazism", "fascism", "incel"};
-    static final String[] LABELS = {"Zionism", "Nazism and white supremacy", "Fascism", "Incels"};
-
+    // Version 1.1 kept Nazism and fascism apart; a stored "nazism" now chooses the joined list.
+    static final String[] KEYS = {"zionism", "fascism", "incel"};
+    static final String LEGACY_NAZISM = "nazism";
+    static final String[] LABELS = {"Zionism", "Fascism, Nazism, and white supremacy", "Incels"};
     private static final String[][] PATTERNS = {
             {"zionis"},
-            {"nazi", "hitler", "1488", "14words", "fourteenwords", "aryan", "thirdreich", "fourthreich",
+            {"fascis", "nazi", "hitler", "1488", "14words", "fourteenwords", "aryan", "thirdreich", "fourthreich",
                     "whitenationalis", "whitesupremac", "whitepride", "whitegenocide", "greatreplacement", "racerealis"},
-            {"fascis", "fascism"},
             {"incel", "braincel", "truecel", "blackpill", "foreveraloneinc"},
     };
 
@@ -42,6 +42,10 @@ final class Topics {
         return String.join(", ", PATTERNS[index]);
     }
 
+    static boolean chosen(Set<String> topics, String key) {
+        return topics.contains(key) || (key.equals("fascism") && topics.contains(LEGACY_NAZISM));
+    }
+
     static String exceptions() {
         return String.join(", ", EXCEPTIONS);
     }
@@ -59,7 +63,7 @@ final class Topics {
             if (name.contains(exception)) return false;
         }
         for (int i = 0; i < KEYS.length; i++) {
-            if (!topics.contains(KEYS[i])) continue;
+            if (!chosen(topics, KEYS[i])) continue;
             for (String pattern : PATTERNS[i]) {
                 if (name.contains(pattern)) return true;
             }

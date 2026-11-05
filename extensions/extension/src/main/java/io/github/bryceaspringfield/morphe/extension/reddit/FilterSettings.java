@@ -12,7 +12,7 @@ import java.util.Set;
 
 /**
  * The filter's settings, kept in the app's own preferences file {@code reddit_keyword_filter}.
- * Every new filter is off by default, so an upgrade changes nothing until the user turns it on.
+ * Every filter shows everything until the user sets it, so an upgrade adding a filter changes nothing.
  */
 @SuppressWarnings("unused")
 final class FilterSettings {
@@ -36,12 +36,11 @@ final class FilterSettings {
     static final String[] FIELD_LABELS = {"Post title", "Post text", "Flair", "Poster (u/name)", "Community (r/name)", "Link domain"};
     private static final Set<String> DEFAULT_FIELDS = new HashSet<>(Arrays.asList(FIELD_TITLE, FIELD_BODY));
 
-    // Post types, each Off, On (hide them), or Only (show only them).
-    static final String MODE_OFF = "off";
+    // Post types: shown (the default), hidden, or shown with every other type hidden. The stored values are those
+    // of 1.1, where "off" meant no filter (shown), so a choice carries over.
+    static final String MODE_SHOW = "off";
     static final String MODE_HIDE = "hide";
     static final String MODE_ONLY = "only";
-    static final String[] MODE_KEYS = {MODE_OFF, MODE_HIDE, MODE_ONLY};
-    static final String[] MODE_LABELS = {"Off", "On: hide these posts", "Only: show only these posts"};
     static final String TYPE_TEXT = "type_text";
     static final String TYPE_PHOTO = "type_photo";
     static final String TYPE_VIDEO = "type_video";
@@ -49,6 +48,8 @@ final class FilterSettings {
     static final String TYPE_NSFW = "type_nsfw";
     static final String[] TYPE_KEYS = {TYPE_TEXT, TYPE_PHOTO, TYPE_VIDEO, TYPE_REPOST, TYPE_NSFW};
     static final String[] TYPE_LABELS = {"Text-only posts", "Photo posts", "Video posts", "Reposts (crossposts)", "18+ posts"};
+    static final String[] TYPE_SWITCH_TITLES = {"Show text-only posts", "Show photo posts", "Show video posts",
+            "Show reposts (crossposts)", "Show 18+ posts"};
 
     // Ranges; a blank bound is no bound.
     static final String POST_SCORE_MIN = "post_score_min";
@@ -87,8 +88,8 @@ final class FilterSettings {
     static final String SIDEBAR_RECENT = "RECENTLY_VISITED";
     static final String[] SIDEBAR_KEYS = {"popular_feed_label", "news_feed_label", "latest_feed_label",
             "communities_cta_title", "label_start_a_community", "label_custom_feeds", SIDEBAR_RECENT};
-    static final String[] SIDEBAR_LABELS = {"Popular", "News", "Latest", "Discover communities",
-            "Start (create) a community", "Custom feeds", "Recently visited"};
+    static final String[] SIDEBAR_SWITCH_TITLES = {"Hide Popular", "Hide News", "Hide Latest",
+            "Hide Discover communities", "Hide Start a community", "Hide Custom feeds", "Hide Recently Visited shelf"};
 
     static final String DEBUG = "debug";
 
@@ -117,7 +118,12 @@ final class FilterSettings {
 
     static String getString(String key, String fallback) {
         SharedPreferences current = preferences();
-        return current == null ? fallback : current.getString(key, fallback);
+        if (current == null) return fallback;
+        try {
+            return current.getString(key, fallback);
+        } catch (ClassCastException ex) {
+            return fallback;
+        }
     }
 
     static void putString(String key, String value) {
@@ -127,7 +133,12 @@ final class FilterSettings {
 
     static boolean getBoolean(String key) {
         SharedPreferences current = preferences();
-        return current != null && current.getBoolean(key, false);
+        if (current == null) return false;
+        try {
+            return current.getBoolean(key, false);
+        } catch (ClassCastException ex) {
+            return false;
+        }
     }
 
     static void putBoolean(String key, boolean value) {
@@ -140,7 +151,22 @@ final class FilterSettings {
      */
     static Set<String> getSet(String key, Set<String> fallback) {
         SharedPreferences current = preferences();
-        String value = current == null ? null : current.getString(key, null);
+        if (current == null) return fallback;
+        String value;
+        try {
+            value = current.getString(key, null);
+        } catch (ClassCastException ex) {
+            // A string set (as other tools write) is read as it is; any other type counts as never saved.
+            try {
+                Set<String> stored = current.getStringSet(key, null);
+                if (stored == null) return fallback;
+                Set<String> set = new HashSet<>();
+                for (String part : stored) if (part != null && !part.trim().isEmpty()) set.add(part.trim());
+                return set;
+            } catch (ClassCastException other) {
+                return fallback;
+            }
+        }
         if (value == null) return fallback;
         Set<String> set = new HashSet<>();
         for (String part : value.split(",")) {
@@ -162,7 +188,7 @@ final class FilterSettings {
     }
 
     static String mode(String typeKey) {
-        return getString(typeKey, MODE_OFF);
+        return getString(typeKey, MODE_SHOW);
     }
 
     /**
@@ -176,13 +202,6 @@ final class FilterSettings {
         } catch (NumberFormatException ex) {
             return null;
         }
-    }
-
-    static String modeLabel(String mode) {
-        for (int i = 0; i < MODE_KEYS.length; i++) {
-            if (MODE_KEYS[i].equals(mode)) return MODE_LABELS[i];
-        }
-        return MODE_LABELS[0];
     }
 
     static String lower(String text) {

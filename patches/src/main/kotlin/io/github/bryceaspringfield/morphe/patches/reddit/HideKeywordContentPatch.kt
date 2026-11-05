@@ -17,6 +17,7 @@ import com.android.tools.smali.dexlib2.iface.instruction.TwoRegisterInstruction
 import com.android.tools.smali.dexlib2.iface.reference.FieldReference
 import com.android.tools.smali.dexlib2.iface.Method
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference
+import com.android.tools.smali.dexlib2.iface.reference.StringReference
 import com.android.tools.smali.dexlib2.iface.reference.TypeReference
 import com.android.tools.smali.dexlib2.AccessFlags
 import com.android.tools.smali.dexlib2.builder.MutableMethodImplementation
@@ -72,6 +73,11 @@ private val COMMENT_LISTS = listOf(
 )
 
 private val logger = Logger.getLogger("HideKeywordContentPatch")
+
+private const val USER_SETTINGS_SECTION = "Lcom/reddit/settings/usersettings/UserSettingsSection;"
+
+/** The key of Reddit's privacy policy row, which Morphe Patches renames "Morphe" and opens its settings from. */
+private const val MORPHE_ROW_KEY = "key_pref_privacy_policy"
 
 @Suppress("unused")
 val hideKeywordContentPatch = bytecodePatch(
@@ -449,6 +455,8 @@ val hideKeywordContentPatch = bytecodePatch(
             return@finalize
         }
 
+        moveMorpheRow()
+
         initialize.apply {
             // From the last return to the first, so earlier indices stay valid.
             instructions.withIndex()
@@ -463,5 +471,67 @@ val hideKeywordContentPatch = bytecodePatch(
             // `this` for its own values before it returns.
             addInstruction(0, "invoke-static { p0 }, $EXTENSION_CLASS->setSettingsFragment(Ljava/lang/Object;)V")
         }
+    }
+}
+
+/**
+ * Moves the "Morphe" row of Reddit's settings from About to General, right under Account settings (order 0 in
+ * General). The row's class sets its section, order, and key in its constructor; each return of the constructor
+ * gets a check of the key, since the class also builds the user agreement row.
+ */
+private fun app.morphe.patcher.patch.BytecodePatchContext.moveMorpheRow() {
+    val found = mutableListOf<com.android.tools.smali.dexlib2.iface.ClassDef>()
+    classDefForEach { classDef ->
+        if (classDef.fields.none { it.type == USER_SETTINGS_SECTION && !AccessFlags.STATIC.isSet(it.accessFlags) }) {
+            return@classDefForEach
+        }
+        val init = classDef.methods.firstOrNull { it.name == "<init>" } ?: return@classDefForEach
+        if (init.implementation?.instructions?.any { it.getReference<StringReference>()?.string == MORPHE_ROW_KEY } == true) {
+            found.add(classDef)
+        }
+    }
+    val row = found.singleOrNull()?.let { mutableClassDefBy(it) }
+    val init = row?.methods?.firstOrNull { method ->
+        method.name == "<init>" && method.instructions.any { it.getReference<StringReference>()?.string == MORPHE_ROW_KEY }
+    }
+    val sectionField = row?.fields?.firstOrNull { it.type == USER_SETTINGS_SECTION && !AccessFlags.STATIC.isSet(it.accessFlags) }
+    // The key field is the one the key string is stored to; the order field is the one getOrder() reads.
+    val keyField = init?.let { method ->
+        val keyIndex = method.instructions.indexOfFirst { it.getReference<StringReference>()?.string == MORPHE_ROW_KEY }
+        method.instructions.drop(keyIndex + 1).firstOrNull { it.opcode == Opcode.IPUT_OBJECT }
+            ?.getReference<FieldReference>()
+    }
+    val orderField = row?.methods?.firstOrNull { it.name == "getOrder" && it.returnType == "I" }
+        ?.instructions?.lastOrNull { it.opcode == Opcode.IGET }?.getReference<FieldReference>()
+    if (init == null || sectionField == null || keyField == null || orderField == null || init.parameterTypes.size < 2) {
+        logger.warning("Could not find the Morphe row of Reddit's settings (found ${found.size} candidates); it stays in About")
+        return
+    }
+    val section = "${row.type}->${sectionField.name}:$USER_SETTINGS_SECTION"
+    val key = "${row.type}->${keyField.name}:Ljava/lang/String;"
+    val order = "${row.type}->${orderField.name}:I"
+    init.apply {
+        instructions.withIndex()
+            .filter { it.value.opcode == Opcode.RETURN_VOID }
+            .map { it.index }
+            .reversed()
+            .forEach { index ->
+                addInstructionsWithLabels(
+                    index,
+                    """
+                        iget-object p1, p0, $key
+                        const-string p2, "$MORPHE_ROW_KEY"
+                        invoke-virtual { p1, p2 }, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
+                        move-result p1
+                        if-eqz p1, :keep_section
+                        sget-object p1, $USER_SETTINGS_SECTION->General:$USER_SETTINGS_SECTION
+                        iput-object p1, p0, $section
+                        const/4 p1, 0x1
+                        iput p1, p0, $order
+                        :keep_section
+                        nop
+                    """
+                )
+            }
     }
 }

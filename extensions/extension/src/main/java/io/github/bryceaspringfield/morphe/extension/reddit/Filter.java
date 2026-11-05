@@ -73,9 +73,10 @@ final class Filter {
      */
     static boolean anyPostFilter() {
         if (!postRules().isEmpty()) return true;
-        for (String key : TYPE_KEYS) if (!MODE_OFF.equals(mode(key))) return true;
+        for (String key : TYPE_KEYS) if (!MODE_SHOW.equals(mode(key))) return true;
         if (bound(POST_SCORE_MIN) != null || bound(POST_SCORE_MAX) != null) return true;
         if (bound(POST_COMMENTS_MIN) != null || bound(POST_COMMENTS_MAX) != null) return true;
+        if (!Scopes.all().isEmpty()) return true;
         return !getSet(TOPICS, Collections.emptySet()).isEmpty() || !topicExtra().isEmpty();
     }
 
@@ -145,17 +146,21 @@ final class Filter {
         }
         if (anyOnly && !matchesOnly) return "not an only type";
 
+        Scopes.noteFlairs(post);
+        String scoped = Scopes.hidePost(post, has);
+        if (scoped != null) return scoped;
+
         if (outside(post.score, POST_SCORE_MIN, POST_SCORE_MAX)) return "score " + post.score;
         if (outside(post.comments, POST_COMMENTS_MIN, POST_COMMENTS_MAX)) return "comments " + post.comments;
         return null;
     }
 
     private static boolean inScope(Rules.Rule rule, PostInfo post) {
-        if (rule.scope.isEmpty()) return true;
-        for (String community : post.communities) {
-            if (rule.scope.contains(community)) return true;
-        }
-        return false;
+        return rule.inScope(post.communities, post.authors);
+    }
+
+    static boolean outside(Long value, Long min, Long max) {
+        return value != null && ((min != null && value < min) || (max != null && value > max));
     }
 
     private static boolean outside(Long value, String minKey, String maxKey) {
@@ -200,7 +205,7 @@ final class Filter {
         String community = Rules.community(String.valueOf(call(comment, "getSubreddit")));
 
         for (Rules.Rule rule : commentRules().rules) {
-            if (!rule.inScope(community)) continue;
+            if (!rule.inScope(Collections.singletonList(community), Collections.singletonList(author))) continue;
             switch (rule.kind) {
                 case AUTHOR:
                     if (author.equals(rule.value)) return "u/" + rule.value;
