@@ -1,5 +1,6 @@
 package io.github.bryceaspringfield.morphe.extension.reddit;
 
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
@@ -85,10 +86,10 @@ final class Rules {
         }
 
         if (lower.startsWith("!flair:") && lower.length() > 7) {
-            return new Rule(Kind.NOT_FLAIR, unquote(lower.substring(7)), scope);
+            return new Rule(Kind.NOT_FLAIR, flairKey(unquote(lower.substring(7))), scope);
         }
         if (lower.startsWith("flair:") && lower.length() > 6) {
-            return new Rule(Kind.FLAIR, unquote(lower.substring(6)), scope);
+            return new Rule(Kind.FLAIR, flairKey(unquote(lower.substring(6))), scope);
         }
         if (lower.length() > 2 && lower.startsWith("r/") && !lower.contains(" ")) {
             return new Rule(Kind.COMMUNITY, community(lower.substring(2)), scope);
@@ -137,6 +138,40 @@ final class Rules {
         name = name.trim().toLowerCase(Locale.ROOT);
         if (name.startsWith("u/")) return "u/" + name.substring(2).trim();
         return "r/" + community(name);
+    }
+
+    private static final Pattern SHORTCODE = Pattern.compile(":[\\p{L}_][\\p{L}\\p{N}_+\\-]*:");
+    private static final Pattern SPACES = Pattern.compile("\\s+");
+
+    /**
+     * A flair as stored and shown: lower case, in Unicode's compatibility form (NFKC), without emoji or :emoji:
+     * codes, with single spaces.
+     */
+    static String flairKey(String text) {
+        if (text == null) return "";
+        String s = Normalizer.normalize(text, Normalizer.Form.NFKC).toLowerCase(Locale.ROOT);
+        s = SHORTCODE.matcher(s).replaceAll(" ");
+        StringBuilder out = new StringBuilder(s.length());
+        s.codePoints().forEach(c -> {
+            int type = Character.getType(c);
+            boolean drop = type == Character.OTHER_SYMBOL || type == Character.SURROGATE || type == Character.FORMAT
+                    || type == Character.NON_SPACING_MARK || type == Character.ENCLOSING_MARK
+                    || type == Character.PRIVATE_USE || type == Character.UNASSIGNED;
+            out.appendCodePoint(drop ? ' ' : c);
+        });
+        return SPACES.matcher(out).replaceAll(" ").trim();
+    }
+
+    /**
+     * A flair's letters and digits alone, for matching: "Meme", "MEME :snoo:", and "[Meme]" all give "meme".
+     */
+    static String flairMatchKey(String text) {
+        String key = flairKey(text);
+        StringBuilder out = new StringBuilder(key.length());
+        key.codePoints().forEach(c -> {
+            if (Character.isLetterOrDigit(c)) out.appendCodePoint(c);
+        });
+        return out.toString();
     }
 
     private static String unquote(String text) {

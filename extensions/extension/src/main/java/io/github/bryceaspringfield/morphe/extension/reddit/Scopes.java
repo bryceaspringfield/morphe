@@ -26,7 +26,7 @@ import java.util.TreeSet;
 final class Scopes {
 
     static final String KEY = "scopes";
-    private static final String SEEN_FLAIRS = "seen_flairs";
+    static final String SEEN_FLAIRS = "seen_flairs";
     private static final int MAX_FLAIRS = 80;
     private static final int MAX_COMMUNITIES = 400;
 
@@ -83,7 +83,13 @@ final class Scopes {
         static Entry fromJson(JSONObject json) {
             Entry entry = new Entry();
             read(json.optJSONObject(TYPES), entry.types);
-            read(json.optJSONObject(FLAIRS), entry.flairs);
+            Map<String, String> flairs = new TreeMap<>();
+            read(json.optJSONObject(FLAIRS), flairs);
+            // Flairs saved before 1.1.3 kept their case and emoji.
+            for (Map.Entry<String, String> flair : flairs.entrySet()) {
+                String key = Rules.flairKey(flair.getKey());
+                if (!key.isEmpty()) entry.flairs.put(key, flair.getValue());
+            }
             read(json.optJSONObject(BOUNDS), entry.bounds);
             return entry;
         }
@@ -193,7 +199,7 @@ final class Scopes {
         anyOnly = false;
         matchesOnly = false;
         for (Map.Entry<String, String> flair : entry.flairs.entrySet()) {
-            boolean hasFlair = post.flairs.contains(flair.getKey());
+            boolean hasFlair = post.hasFlair(flair.getKey());
             if (MODE_HIDE.equals(flair.getValue()) && hasFlair) return "flair " + flair.getKey();
             if (MODE_ONLY.equals(flair.getValue())) {
                 anyOnly = true;

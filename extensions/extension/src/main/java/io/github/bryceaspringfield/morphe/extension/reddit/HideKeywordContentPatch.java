@@ -116,6 +116,17 @@ public final class HideKeywordContentPatch {
         return text.toString();
     }
 
+    /** The distinct class names of a feed's elements, as their toString() starts, for debug logging. */
+    private static String elementNames(List<?> list) {
+        Set<String> names = new java.util.LinkedHashSet<>();
+        for (Object element : list) {
+            String text = String.valueOf(element);
+            int end = text.indexOf('(');
+            names.add(end > 0 ? text.substring(0, end) : element == null ? "null" : element.getClass().getName());
+        }
+        return names.toString();
+    }
+
     /**
      * Injection point. Filters each page of a feed (Home, Popular, News, a community, search, a profile).
      *
@@ -123,9 +134,13 @@ public final class HideKeywordContentPatch {
      */
     public static List<?> filterFeedElements(List<?> list, Object source) {
         try {
-            if (list == null || list.isEmpty() || !Filter.anyPostFilter()) return list;
+            if (list == null || list.isEmpty()) return list;
+            Profiles.checkAccount();
+            if (getBoolean(DEBUG)) Log.d(TAG, "feed " + feedType(source) + " elements " + elementNames(list));
             String type = feedType(source);
             String place = Filter.placeOf(type);
+            if (PLACE_COMMUNITY.equals(place)) RecentCommunities.visited(sourceCommunity(source));
+            if (!Filter.anyPostFilter()) return list;
             if (place == null) return list;
 
             boolean debug = getBoolean(DEBUG);
@@ -196,17 +211,70 @@ public final class HideKeywordContentPatch {
     }
 
     /**
-     * Why a post a feed showed is hidden now that a translation rewrote it, or null if it stays: the rules applied to
-     * the post at the place the feed showed it.
+     * Why a post a feed showed is hidden now, after a translation rewrote it or the settings changed, or null if it
+     * stays: the rules applied to the post at the place the feed showed it, else at the place of the pager being
+     * filtered again.
      */
     private static String hideAfterTranslation(Object element, boolean debug) {
         PostInfo post = PostInfo.fromElement(element);
         String[] where = post.isPost ? SHOWN_PLACES.get(post.id) : null;
-        if (where == null) return null;
-        post.defaultCommunity(where[2]);
-        String reason = Filter.hidePost(post, where[0]);
-        if (debug && reason != null) Log.d(TAG, "hide after translation (" + reason + ") " + where[1] + " " + post);
+        String place = where != null ? where[0] : PAGER_PLACE.get();
+        if (place == null) return null;
+        if (where != null) post.defaultCommunity(where[2]);
+        String reason = Filter.hidePost(post, place);
+        if (debug && reason != null) Log.d(TAG, "hide on refilter (" + reason + ") " + place + " " + post);
         return reason;
+    }
+
+    /**
+     * The place of the pager {@link #refilterPagerState(Object)} filters, for posts its feed loaded while no filter
+     * was set (their place was not recorded).
+     */
+    private static final ThreadLocal<String> PAGER_PLACE = new ThreadLocal<>();
+
+    /**
+     * Every feed pager alive: Home's cached pager and the pager of each other feed (search, profiles, communities).
+     */
+    private static final List<WeakReference<Object>> PAGERS = new ArrayList<>();
+
+    /**
+     * Injection point, at the end of each feed pager's constructor.
+     */
+    public static void registerPager(Object pager) {
+        if (pager == null) return;
+        synchronized (PAGERS) {
+            PAGERS.removeIf(ref -> ref.get() == null);
+            PAGERS.add(new WeakReference<>(pager));
+        }
+    }
+
+    private static final Runnable REFILTER_ALL = () -> {
+        List<Object> pagers = new ArrayList<>();
+        synchronized (PAGERS) {
+            PAGERS.removeIf(ref -> ref.get() == null);
+            for (WeakReference<Object> ref : PAGERS) {
+                Object pager = ref.get();
+                if (pager != null) pagers.add(pager);
+            }
+        }
+        int changed = 0;
+        for (Object pager : pagers) {
+            try {
+                if (refilterPagerState(pager)) changed++;
+            } catch (Throwable ex) {
+                Log.e(TAG, "refilterPagerState failure", ex);
+            }
+        }
+        Log.i(TAG, "settings changed: filtered " + pagers.size() + " open feeds again, " + changed + " changed");
+    };
+
+    /**
+     * Called after each settings write: filters every open feed again half a second after the last write, so a feed
+     * loaded before the change loses the posts the new settings hide without a refresh.
+     */
+    static void settingsChanged() {
+        MAIN.removeCallbacks(REFILTER_ALL);
+        MAIN.postDelayed(REFILTER_ALL, 500);
     }
 
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
@@ -266,12 +334,33 @@ public final class HideKeywordContentPatch {
     }
 
     /**
-     * Removes the posts {@link #keptLists(List, List)} drops from a pager's state, with the app's own state copy and
-     * compare-and-set; the patch replaces this method.
+     * Removes the posts {@link #keptLists(List, List)} drops from a pager's state.
      *
      * @return Whether posts were removed.
      */
     public static boolean refilterPagerState(Object pager) {
+        if (pager == null || !Filter.anyPostFilter()) return false;
+        String type = feedType(pager);
+        PAGER_PLACE.set(type == null ? null : Filter.placeOf(type));
+        try {
+            return refilterFeedPager(pager) || refilterCachedPager(pager);
+        } finally {
+            PAGER_PLACE.remove();
+        }
+    }
+
+    /**
+     * Removes the posts {@link #keptLists(List, List)} drops from the state of a RedditFeedPager, with the app's own
+     * state copy and compare-and-set; the patch replaces this method, which returns false for any other object.
+     */
+    public static boolean refilterFeedPager(Object pager) {
+        return false;
+    }
+
+    /**
+     * The same, for Home's RedditCachedFeedPager; the patch replaces this method.
+     */
+    public static boolean refilterCachedPager(Object pager) {
         return false;
     }
 
@@ -383,6 +472,53 @@ public final class HideKeywordContentPatch {
     /**
      * Injection point. Whether to hide the badge (orange dot) on the sidebar button.
      */
+    /**
+     * Injection point, at the start of each screen's handler of the bars' expanded fraction (0 hidden, 1 shown) as a
+     * feed scrolls: 1 while the setting keeps the bars shown.
+     */
+    /** Whether the user turned captions on or off since the app started; the stored choice then holds. */
+    private static volatile boolean captionsChosen;
+
+    /**
+     * Injection point, after each read of Reddit's stored captions switch: on while the setting turns captions on at
+     * every start and the user has not changed them since.
+     */
+    public static boolean captionsEnabled(boolean stored) {
+        try {
+            boolean on = !captionsChosen && getBoolean(CAPTIONS_ON) || stored;
+            if (getBoolean(DEBUG)) Log.d(TAG, "captions read: stored " + stored + ", shown " + on);
+            return on;
+        } catch (Exception ex) {
+            return stored;
+        }
+    }
+
+    /**
+     * Injection point, at the start of the step opening a feed post's link: true when the link's media opened in the
+     * player inside Reddit.
+     */
+    public static boolean onLinkClick(Object step) {
+        return MediaLinks.onLinkClick(step);
+    }
+
+    /** Injection point, after each read of the blur-mature-media setting: whether 18+ media shows blurred. */
+    public static boolean blurNsfw(boolean blur) {
+        return blur && !getBoolean(NO_NSFW_BLUR);
+    }
+
+    /** Injection point, before Reddit stores the captions switch the user changed. */
+    public static void captionsChanged() {
+        captionsChosen = true;
+    }
+
+    public static float barsExpandedFraction(float fraction) {
+        try {
+            return getBoolean(KEEP_BARS) ? 1f : fraction;
+        } catch (Exception ex) {
+            return fraction;
+        }
+    }
+
     public static boolean hideMenuBadge() {
         try {
             return getBoolean(HIDE_MENU_BADGE);

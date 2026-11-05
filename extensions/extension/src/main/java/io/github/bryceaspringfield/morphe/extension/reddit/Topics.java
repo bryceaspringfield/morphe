@@ -21,9 +21,23 @@ final class Topics {
             {"incel", "braincel", "truecel", "blackpill", "foreveraloneinc"},
     };
 
-    private static final String[] EXCEPTIONS = {"anti", "against", "inceltear", "incelexit", "grammarnazi",
-            "soupnazi", "feminazi", "punchanazi", "nazihunt", "debunk", "watch", "exit", "recover", "former",
-            "history", "askhistorian"};
+    /** Names sharing a topic's letters by chance, or about the topic without promoting it: never hidden. */
+    private static final String[] EXCEPTIONS = {"inceltear", "incelexit", "grammarnazi", "soupnazi", "feminazi",
+            "nazihunt", "debunk", "watch", "exit", "recover", "former", "history", "askhistorian", "ashkenazi",
+            "princel", "pincel"};
+
+    /**
+     * Words opposing the topic when they come right before its pattern (r/AntiZionism, r/JewsAgainstZionism,
+     * r/PunchTheNazis); a "the" between the two is skipped.
+     */
+    private static final String[] OPPOSING_BEFORE = {"anti", "against", "fuck", "fck", "stop", "end", "punch", "kill",
+            "smash", "no", "not", "non", "post", "ex", "beyond", "leaving", "leftover", "criticalof", "critiqueof",
+            "survivorsof", "victimsof", "resist", "fight", "fighting", "defeat", "defeating", "bash"};
+
+    /** Words opposing the topic when they come after its pattern (r/ZionismIsRacism, r/NazisSuck). */
+    private static final String[] OPPOSING_AFTER = {"sucks", "suck", "isracism", "isterror", "isevil", "isfascism",
+            "isnazism", "criticism", "critique", "debunked", "victims", "survivors", "busters", "hunters", "punchers",
+            "fuckoff", "punksfuckoff", "out", "watch"};
 
     private Topics() {
     }
@@ -46,10 +60,6 @@ final class Topics {
         return topics.contains(key) || (key.equals("fascism") && topics.contains(LEGACY_NAZISM));
     }
 
-    static String exceptions() {
-        return String.join(", ", EXCEPTIONS);
-    }
-
     /**
      * Whether the community belongs to a chosen topic or to the user's own list.
      */
@@ -65,7 +75,27 @@ final class Topics {
         for (int i = 0; i < KEYS.length; i++) {
             if (!chosen(topics, KEYS[i])) continue;
             for (String pattern : PATTERNS[i]) {
-                if (name.contains(pattern)) return true;
+                for (int at = name.indexOf(pattern); at >= 0; at = name.indexOf(pattern, at + 1)) {
+                    if (!opposed(name, at, at + pattern.length())) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** Whether the pattern found at {@code start} to {@code end} of {@code name} has an opposing word beside it. */
+    private static boolean opposed(String name, int start, int end) {
+        String before = name.substring(0, start);
+        if (before.endsWith("the")) before = before.substring(0, before.length() - 3);
+        for (String word : OPPOSING_BEFORE) {
+            if (before.endsWith(word)) return true;
+        }
+        // The pattern's word may go on past the pattern (zionis-m, zionis-ts, nazi-s) before the opposing word.
+        for (int extra = 0; extra <= 3 && end + extra <= name.length(); extra++) {
+            if (extra > 0 && "msta".indexOf(name.charAt(end + extra - 1)) < 0) break;
+            String after = name.substring(end + extra);
+            for (String word : OPPOSING_AFTER) {
+                if (after.startsWith(word)) return true;
             }
         }
         return false;

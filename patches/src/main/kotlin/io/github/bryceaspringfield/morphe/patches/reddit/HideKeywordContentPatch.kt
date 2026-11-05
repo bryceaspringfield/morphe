@@ -56,6 +56,10 @@ private val FEED_MODIFICATIONS = listOf(
 private const val FEED_PAGER_MODIFICATION_CALL =
     "Lcom/reddit/feeds/impl/domain/paging/RedditFeedPager\$applyFeedModification\$1;"
 
+/** A suspended call of RedditCachedFeedPager whose constructor takes the pager first. */
+private const val CACHED_PAGER_INNER_CALL =
+    "Lcom/reddit/feeds/impl/domain/paging/RedditCachedFeedPager\$handleLoadError\$1;"
+
 /**
  * Whether a method is the app's copy of a collection into an immutable list of the type given: static, taking an
  * Iterable, and returning the Iterable itself when it is already of that type.
@@ -236,9 +240,7 @@ val hideKeywordContentPatch = bytecodePatch(
         // A requested translation of one post changes the post in place, through the pager's update of one element,
         // and runs no feed modification. After such an update the extension filters the pager's state again, and the
         // generated refilterPagerState writes the posts kept with the app's own state copy and compare-and-set.
-        run {
-            val pagerType = classDefByOrNull(FEED_PAGER_MODIFICATION_CALL)?.methods
-                ?.firstOrNull { it.name == "<init>" }?.parameterTypes?.firstOrNull()?.toString()
+        fun refilterHooks(pagerType: String?, stubName: String) {
             val pager = pagerType?.let { mutableClassDefByOrNull(it) }
             val update = pager?.methods?.firstOrNull { m ->
                 m.returnType == "V" && m.parameterTypes.map { it.toString() } == listOf("Ljava/lang/String;", "Ljava/util/List;") &&
@@ -273,8 +275,8 @@ val hideKeywordContentPatch = bytecodePatch(
                 listFields.size != 2 || extension == null || update.implementation!!.registerCount > 16 ||
                 copy.parameterTypes.any { it.toString() == "J" || it.toString() == "D" }
             ) {
-                logger.warning("Could not find the feed pager's element update; posts translated on request are not filtered again")
-                return@run
+                logger.warning("Could not find the element update of feed pager $pagerType; its open feed is not filtered again")
+                return
             }
             // The mask the app passes: the literal last written to the copy call's last register before the call.
             val range = copyCall.first as RegisterRangeInstruction
@@ -290,6 +292,8 @@ val hideKeywordContentPatch = bytecodePatch(
             fun callOp(op: Opcode) = if (op == Opcode.INVOKE_INTERFACE) "invoke-interface" else "invoke-virtual"
             val body = """
                 move-object/from16 v5, p0
+                instance-of v7, v5, $pagerType
+                if-eqz v7, :none
                 check-cast v5, $pagerType
                 iget-object v0, v5, $pagerType->${stateField.name}:$stateFlow
                 :loop
@@ -321,11 +325,11 @@ val hideKeywordContentPatch = bytecodePatch(
                 const/4 v0, 0x0
                 return v0
             """
-            extension.methods.removeIf { it.name == "refilterPagerState" }
+            extension.methods.removeIf { it.name == stubName }
             extension.methods.add(
                 ImmutableMethod(
                     EXTENSION_CLASS,
-                    "refilterPagerState",
+                    stubName,
                     listOf(ImmutableMethodParameter("Ljava/lang/Object;", emptySet(), "pager")),
                     "Z",
                     AccessFlags.PUBLIC.value or AccessFlags.STATIC.value,
@@ -350,7 +354,25 @@ val hideKeywordContentPatch = bytecodePatch(
                 }
             )
             update.addInstruction(0, "invoke-static { p0, p2 }, $EXTENSION_CLASS->onElementEvents(Ljava/lang/Object;Ljava/util/List;)V")
+            // Each pager registers itself, so a settings change filters every open feed again.
+            pager.methods.filter { it.name == "<init>" }.forEach { constructor ->
+                constructor.instructions.withIndex().filter { it.value.opcode == Opcode.RETURN_VOID }.map { it.index }
+                    .sortedDescending().forEach { index ->
+                        constructor.addInstruction(index, "invoke-static/range { p0 .. p0 }, $EXTENSION_CLASS->registerPager(Ljava/lang/Object;)V")
+                    }
+            }
         }
+        refilterHooks(
+            classDefByOrNull(FEED_PAGER_MODIFICATION_CALL)?.methods
+                ?.firstOrNull { it.name == "<init>" }?.parameterTypes?.firstOrNull()?.toString(),
+            "refilterFeedPager",
+        )
+        refilterHooks(
+            classDefByOrNull(CACHED_PAGER_INNER_CALL)?.methods
+                ?.firstOrNull { it.name == "<init>" }?.parameterTypes?.firstOrNull()?.toString(),
+            "refilterCachedPager",
+        )
+
 
         // Filter each post's comments where the app stores them.
         COMMENT_LISTS.forEach { type ->
@@ -409,7 +431,65 @@ val hideKeywordContentPatch = bytecodePatch(
             it.opcode == Opcode.INVOKE_VIRTUAL && reference?.returnType == "V" &&
                     reference.parameterTypes.map { type -> type.toString() } == listOf("Ljava/util/List;")
         } ?: -1
-        if (drawerBinder == null || drawerCall < 0) {
+        // The presenter keeps the list it binds and reads a tapped row by its position in that list, so the rows are
+        // removed where the presenter stores the list, keeping each position on the row shown there.
+        val drawerListField = drawerBinder?.instructions?.take(maxOf(drawerCall, 0))?.lastOrNull {
+            it.opcode == Opcode.IGET_OBJECT && it.getReference<FieldReference>()?.type == "Ljava/util/List;"
+        }?.getReference<FieldReference>()
+        var drawerStores = 0
+        val drawerOwner = drawerListField?.let { mutableClassDefByOrNull(it.definingClass) }
+        if (drawerListField != null && drawerOwner != null) {
+            // A helper in the presenter filters the stored list in place after each store; filtering the value before
+            // the store changes the register's type, which the verifier rejects where the method reuses the register.
+            val field = "${drawerOwner.type}->${drawerListField.name}:Ljava/util/List;"
+            val helper = "morpheFilterSidebar"
+            drawerOwner.methods.removeIf { it.name == helper }
+            drawerOwner.methods.add(
+                ImmutableMethod(
+                    drawerOwner.type,
+                    helper,
+                    listOf(ImmutableMethodParameter(drawerOwner.type, emptySet(), "presenter")),
+                    "V",
+                    AccessFlags.PRIVATE.value or AccessFlags.STATIC.value,
+                    emptySet(),
+                    null,
+                    MutableMethodImplementation(2),
+                ).toMutable().apply {
+                    addInstructions(
+                        0,
+                        """
+                            iget-object v0, p0, $field
+                            invoke-static { v0 }, $EXTENSION_CLASS->filterSidebar(Ljava/util/List;)Ljava/util/List;
+                            move-result-object v0
+                            iput-object v0, p0, $field
+                            return-void
+                        """
+                    )
+                }
+            )
+            drawerOwner.methods.forEach { method ->
+                // The constructor stores the empty list only.
+                if (method.implementation == null || method.name == "<init>" || method.name == helper) return@forEach
+                val stores = method.instructions.withIndex().filter { (_, instruction) ->
+                    instruction.opcode == Opcode.IPUT_OBJECT && instruction.getReference<FieldReference>().let {
+                        it?.definingClass == drawerListField.definingClass && it.name == drawerListField.name &&
+                                it.type == drawerListField.type
+                    }
+                }.map { it.index }
+                stores.sortedDescending().forEach { index ->
+                    val owner = method.getInstruction<TwoRegisterInstruction>(index).registerB
+                    method.addInstruction(
+                        index + 1,
+                        "invoke-static/range { v$owner .. v$owner }, ${drawerOwner.type}->$helper(${drawerOwner.type})V"
+                    )
+                    drawerStores++
+                }
+            }
+        }
+        logger.info("Sidebar list stores filtered: $drawerStores")
+        if (drawerStores > 0) {
+            logger.info("Sidebar rows are removed from the presenter's own list")
+        } else if (drawerBinder == null || drawerCall < 0) {
             logger.warning("Could not find the sidebar's list; sidebar rows cannot be hidden")
         } else drawerBinder.apply {
             val register = getInstruction<FiveRegisterInstruction>(drawerCall).registerD
@@ -456,6 +536,10 @@ val hideKeywordContentPatch = bytecodePatch(
         }
 
         moveMorpheRow()
+        keepBarsShown()
+        captionsOnByDefault()
+        mediaLinksInApp()
+        nsfwBlurSwitch()
 
         initialize.apply {
             // From the last return to the first, so earlier indices stay valid.
@@ -534,4 +618,185 @@ private fun app.morphe.patcher.patch.BytecodePatchContext.moveMorpheRow() {
                 )
             }
     }
+}
+
+/** The step of a feed's link tap which opens the post's link, given the context, the link, and the tap event. */
+private const val LINK_OPEN_STEP =
+    "Lcom/reddit/feeds/impl/ui/actions/OnClickPostLinkEventHandler\$handleEvent\$5;"
+
+/**
+ * Plays the media of a link post (imgur, Streamable, RedGIFs, and others) inside Reddit: the step opening a feed
+ * post's link first asks the extension, which opens its player and ends the step when the link is media.
+ */
+private fun app.morphe.patcher.patch.BytecodePatchContext.mediaLinksInApp() {
+    val step = mutableClassDefByOrNull(LINK_OPEN_STEP)
+    val method = step?.methods?.firstOrNull { it.name == "invokeSuspend" && it.implementation != null }
+    val unit = method?.instructions?.firstOrNull {
+        it.opcode == Opcode.SGET_OBJECT && it.getReference<FieldReference>()?.type == "Lkotlin/Unit;"
+    }?.getReference<FieldReference>()
+    if (method == null || unit == null || method.implementation!!.registerCount - method.parameters.size - 1 < 1) {
+        logger.warning("Could not find the step opening a post's link; media links open in the browser")
+        return
+    }
+    method.addInstructionsWithLabels(
+        0,
+        """
+            invoke-static { p0 }, $EXTENSION_CLASS->onLinkClick(Ljava/lang/Object;)Z
+            move-result v0
+            if-eqz v0, :open_link
+            sget-object v0, Lkotlin/Unit;->${unit.name}:Lkotlin/Unit;
+            return-object v0
+            :open_link
+            nop
+        """
+    )
+    logger.info("Media links: hooked the step opening a post's link")
+}
+
+/** The local key of the blur-mature-media setting, read in the preference repository beside the account's own. */
+private const val NSFW_BLUR_KEY = "nsfw_blur_enabled"
+
+/**
+ * Lets the extension turn off the 18+ blur: each read of the blur-mature-media setting, the local key for a
+ * logged-out session and the account's getNoProfanity() otherwise, passes its result through the extension.
+ */
+private fun app.morphe.patcher.patch.BytecodePatchContext.nsfwBlurSwitch() {
+    var total = 0
+    val found = mutableListOf<com.android.tools.smali.dexlib2.iface.ClassDef>()
+    classDefForEach { classDef ->
+        if (classDef.type.startsWith("Lio/github/bryceaspringfield/") || classDef.type.startsWith("Lapp/morphe/")) return@classDefForEach
+        if (classDef.methods.any { method ->
+                method.implementation?.instructions?.any {
+                    it.getReference<StringReference>()?.string == NSFW_BLUR_KEY ||
+                            it.getReference<MethodReference>()?.let { m -> m.name == "getNoProfanity" && m.returnType == "Z" } == true
+                } == true
+            }) found.add(classDef)
+    }
+    found.forEach { classDef ->
+        mutableClassDefBy(classDef).methods.forEach { method ->
+            if (method.implementation == null || method.name == "getNoProfanity") return@forEach
+            val list = method.instructions.toList()
+            val calls = list.indices.mapNotNull { i ->
+                val instruction = list[i]
+                val reference = instruction.getReference<MethodReference>()
+                val call = when {
+                    reference?.name == "getNoProfanity" && reference.returnType == "Z" -> i
+                    instruction.getReference<StringReference>()?.string == NSFW_BLUR_KEY -> {
+                        val register = (instruction as OneRegisterInstruction).registerA
+                        (i + 1 until minOf(i + 8, list.size)).firstOrNull { j ->
+                            val it = list[j]
+                            it is FiveRegisterInstruction && it.getReference<MethodReference>()?.returnType == "Z" &&
+                                    it.registerCount >= 2 && it.registerD == register
+                        }
+                    }
+                    else -> null
+                }
+                call?.takeIf { list.getOrNull(it + 1)?.opcode == Opcode.MOVE_RESULT }
+            }.distinct().sortedDescending()
+            calls.forEach { call ->
+                val result = (list[call + 1] as OneRegisterInstruction).registerA
+                method.addInstructions(
+                    call + 2,
+                    """
+                        invoke-static/range { v$result .. v$result }, $EXTENSION_CLASS->blurNsfw(Z)Z
+                        move-result v$result
+                    """
+                )
+            }
+            total += calls.size
+        }
+    }
+    if (total == 0) logger.warning("Could not find the blur-mature-media reads; the 18+ caution stays")
+    else logger.info("18+ caution: hooked $total reads in ${found.size} classes")
+}
+
+/**
+ * Turns video captions on by default: each read of Reddit's stored captions switch (a boolean preference under the
+ * key below) goes through the extension, and each store of the switch first tells the extension the user chose.
+ */
+private const val CAPTIONS_KEY = "captions_preferences_captions_enabled"
+
+private fun app.morphe.patcher.patch.BytecodePatchContext.captionsOnByDefault() {
+    val found = mutableListOf<com.android.tools.smali.dexlib2.iface.ClassDef>()
+    classDefForEach { classDef ->
+        if (classDef.methods.any { method ->
+                method.implementation?.instructions?.any { it.getReference<StringReference>()?.string == CAPTIONS_KEY } == true
+            }) found.add(classDef)
+    }
+    var reads = 0
+    var stores = 0
+    found.forEach { classDef ->
+        mutableClassDefBy(classDef).methods.forEach { method ->
+            if (method.implementation == null) return@forEach
+            val list = method.instructions.toList()
+            val keys = list.withIndex().filter { it.value.getReference<StringReference>()?.string == CAPTIONS_KEY }
+            // Hooks are added from the last instruction back, keeping earlier indexes valid.
+            keys.map { (index, instruction) ->
+                val register = (instruction as OneRegisterInstruction).registerA
+                val call = (index + 1 until minOf(index + 8, list.size)).firstOrNull { i ->
+                    val it = list[i]
+                    it is FiveRegisterInstruction && it.getReference<MethodReference>() != null &&
+                            it.registerCount >= 2 && it.registerD == register
+                }
+                index to call
+            }.filter { it.second != null }.sortedByDescending { it.second }.forEach { (_, call) ->
+                val reference = list[call!!].getReference<MethodReference>()!!
+                when {
+                    reference.returnType == "Z" && list.getOrNull(call + 1)?.opcode == Opcode.MOVE_RESULT -> {
+                        val result = (list[call + 1] as OneRegisterInstruction).registerA
+                        method.addInstructions(
+                            call + 2,
+                            """
+                                invoke-static/range { v$result .. v$result }, $EXTENSION_CLASS->captionsEnabled(Z)Z
+                                move-result v$result
+                            """
+                        )
+                        reads++
+                    }
+                    reference.returnType == "V" -> {
+                        method.addInstruction(call, "invoke-static { }, $EXTENSION_CLASS->captionsChanged()V")
+                        stores++
+                    }
+                }
+            }
+        }
+    }
+    logger.info("Captions switch: hooked $reads reads and $stores stores in ${found.size} classes")
+}
+
+/**
+ * Keeps the home screen's top bar and the bottom bar shown while a feed scrolls: every screen told the bars' expanded
+ * fraction (the bottom bar, the home pager, and the screens they pass it to) gets 1, fully shown, when the setting is
+ * on. The screens implement a one-method interface taking the fraction, found among BottomNavScreen's interfaces.
+ */
+private fun app.morphe.patcher.patch.BytecodePatchContext.keepBarsShown() {
+    val bottomNav = classDefByOrNull(BOTTOM_NAV_SCREEN)
+    val listener = bottomNav?.interfaces?.firstOrNull { name ->
+        classDefByOrNull(name)?.methods?.toList()?.let { methods ->
+            methods.size == 1 && methods[0].returnType == "V" && methods[0].parameterTypes.map { it.toString() } == listOf("F")
+        } == true
+    }
+    val methodName = listener?.let { classDefByOrNull(it)?.methods?.first()?.name }
+    if (listener == null || methodName == null) {
+        logger.warning("Could not find the bars' expanded-fraction listener; the bars still hide on scroll")
+        return
+    }
+    val implementers = mutableListOf<com.android.tools.smali.dexlib2.iface.ClassDef>()
+    classDefForEach { classDef -> if (listener in classDef.interfaces) implementers.add(classDef) }
+    var hooked = 0
+    implementers.forEach { classDef ->
+        val method = mutableClassDefBy(classDef).methods.firstOrNull {
+            it.name == methodName && it.returnType == "V" && it.parameterTypes.map { t -> t.toString() } == listOf("F") &&
+                    it.implementation != null
+        } ?: return@forEach
+        method.addInstructions(
+            0,
+            """
+                invoke-static/range { p1 .. p1 }, $EXTENSION_CLASS->barsExpandedFraction(F)F
+                move-result p1
+            """
+        )
+        hooked++
+    }
+    logger.info("Bars kept shown on scroll: hooked $hooked of ${implementers.size} screens of $listener")
 }

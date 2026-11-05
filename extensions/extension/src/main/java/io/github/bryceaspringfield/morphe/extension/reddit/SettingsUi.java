@@ -1,8 +1,8 @@
 package io.github.bryceaspringfield.morphe.extension.reddit;
 
+import static io.github.bryceaspringfield.morphe.extension.reddit.Strings.t;
 import static io.github.bryceaspringfield.morphe.extension.reddit.FilterSettings.*;
 
-import android.app.AlertDialog;
 import android.app.Dialog;
 import android.content.Context;
 import android.preference.CheckBoxPreference;
@@ -15,40 +15,33 @@ import android.preference.PreferenceScreen;
 import android.preference.SwitchPreference;
 import android.text.InputType;
 import android.util.Log;
+import android.view.View;
+import android.widget.BaseAdapter;
 import android.widget.EditText;
-import android.widget.LinearLayout;
-import android.widget.TextView;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
- * This bundle's rows in Settings > Morphe: the Keyword filter category after Ads, with screens for topics,
- * subreddits, and profiles, and switches added to Morphe's own Navigation bar and Sidebar categories.
+ * This bundle's rows in Settings > Morphe: the Keyword filter category after Ads, with screens for post types,
+ * topics, subreddits, and profiles, and switches added to Morphe's own Navigation bar and Sidebar categories.
  */
 final class SettingsUi {
 
-    private static final String RULE_LINES = "One rule a line:\n"
-            + "  r/name  hides a community\n"
-            + "  u/name  hides an account\n"
-            + "  flair:Meme  hides posts with that flair\n"
-            + "  !flair:Meme  hides posts without it\n"
-            + "  \"phrase\"  matches whole words\n"
-            + "  any text  matches anywhere";
-    private static final String RULE_HELP = RULE_LINES + "\n"
-            + "A rule starting with r/name: or u/name: (for example r/pics: cat) moves to that subreddit's or "
-            + "profile's filters.";
-    private static final String COMMENT_HELP = "One rule a line: u/name hides an account's comments, \"phrase\" "
-            + "matches whole words, and any other text matches anywhere in a comment.";
+    private static final String RULE_HELP = "One rule a line: r/name, u/name, flair:Meme, !flair:Meme, "
+            + "\"whole phrase\", or any text.";
+    private static final String COMMENT_HELP = "One rule a line: u/name, \"whole phrase\", or any text.";
 
-    private static final String[] FLAIR_MODES = {MODE_HIDE, MODE_SHOW, MODE_ONLY};
-    private static final String[] FLAIR_LABELS = {"Off: hidden", "On: shown",
-            "Only: shown, and posts without an Only flair hidden"};
+    /** The three settings of a post type or flair: Off hides it, On shows it, Only shows it and hides the rest. */
+    private static final String[] MODES = {MODE_HIDE, MODE_SHOW, MODE_ONLY};
+    private static final String[] MODE_LABELS = {"Off", "On", "Only"};
 
     private interface Summary {
         String get();
@@ -138,33 +131,79 @@ final class SettingsUi {
         Context context = fragment.getActivity();
         PreferenceManager manager = fragment.getPreferenceManager();
         if (screen == null || context == null || manager == null) return;
+        SCREENS.clear();
+        SCREENS.add(screen);
+        Profiles.morpheFile(manager.getSharedPreferencesName());
+        Profiles.checkAccount();
 
-        PreferenceCategory filter = newCategory(context, screen, "Keyword filter");
-        placeAfter(screen, filter, categoryHolding(screen, "morphe_hide_post_ads"));
+        PreferenceScreen filterScreen = screen(context, manager, screen, "Keyword filter");
+        placeAfter(screen, filterScreen, categoryHolding(screen, "morphe_hide_post_ads"));
+        PreferenceCategory filter = newCategory(context, filterScreen, "Posts");
         item(context, filter, "Keywords to hide", () -> rulesSummary(Scopes.rulesOf(POST_RULES, "")),
                 p -> editRules(context, p, POST_RULES, "", "Keywords to hide", RULE_HELP, null));
-        item(context, filter, "Keywords apply to", SettingsUi::fieldsSummary,
-                p -> chooseSet(context, p, "Keywords apply to", FIELDS, FIELD_KEYS, FIELD_LABELS, fields(),
-                        SettingsUi::fieldsSummary));
-        addTypes(context, filter, GLOBAL_MODES, null);
+        addChecks(context, manager, filter, "Keywords apply to", FIELDS, FIELD_KEYS, FIELD_LABELS,
+                FilterSettings::fields, "Nothing");
+        PreferenceScreen types = screen(context, manager, filter, "Post types");
+        types.setSummary(typesSummary(GLOBAL_MODES));
+        addTypes(context, types, GLOBAL_MODES, () -> types.setSummary(typesSummary(GLOBAL_MODES)));
         addRanges(context, filter, GLOBAL_BOUNDS, null);
+        toggle(context, filter, "Hide duplicate posts", () -> getBoolean(HIDE_DUPLICATES),
+                on -> putBoolean(HIDE_DUPLICATES, on))
+                .setSummary(t("Hides a post with the same title, text, or media as one already shown since Reddit started, such as the same post shared to several communities."));
         addTopics(context, manager, filter);
-        addScopeList(context, manager, filter, "r/");
-        addScopeList(context, manager, filter, "u/");
-        item(context, filter, "Where post filters apply", SettingsUi::placesSummary,
-                p -> chooseSet(context, p, "Where post filters apply", PLACES, PLACE_KEYS, PLACE_LABELS, places(),
-                        SettingsUi::placesSummary));
-        item(context, filter, "Comment keywords to hide", () -> rulesSummary(Scopes.rulesOf(COMMENT_RULES, "")),
+        addChecks(context, manager, filter, "Where post filters apply", PLACES, PLACE_KEYS, PLACE_LABELS,
+                FilterSettings::places, "Nowhere");
+        PreferenceCategory sources = newCategory(context, filterScreen, "Subreddits and profiles");
+        addScopeList(context, manager, sources, "r/");
+        addScopeList(context, manager, sources, "u/");
+        toggle(context, sources, "Hide posts and comments by deleted accounts", () -> getBoolean(HIDE_DELETED),
+                on -> putBoolean(HIDE_DELETED, on));
+        PreferenceCategory comments = newCategory(context, filterScreen, "Comments");
+        item(context, comments, "Comment keywords to hide", () -> rulesSummary(Scopes.rulesOf(COMMENT_RULES, "")),
                 p -> editRules(context, p, COMMENT_RULES, "", "Comment keywords to hide", COMMENT_HELP, null));
-        item(context, filter, "Comment score (upvotes)",
+        item(context, comments, "Comment score",
                 () -> rangeSummary(GLOBAL_BOUNDS, COMMENT_SCORE_MIN, COMMENT_SCORE_MAX),
-                p -> editRange(context, p, "Comment score (upvotes)", GLOBAL_BOUNDS, COMMENT_SCORE_MIN,
-                        COMMENT_SCORE_MAX, null));
+                p -> editRange(context, p, "Comment score", GLOBAL_BOUNDS, COMMENT_SCORE_MIN, COMMENT_SCORE_MAX,
+                        null));
 
         PreferenceCategory navigation = morpheCategory(context, screen, "morphe_hide_chat_button",
                 "morphe_screen_navigation_bar_title", "Navigation bar");
-        toggle(context, navigation, "Hide Inbox button", "Restart the app to apply",
-                () -> getBoolean(HIDE_INBOX_TAB), on -> putBoolean(HIDE_INBOX_TAB, on));
+        toggle(context, navigation, "Hide Inbox button", () -> getBoolean(HIDE_INBOX_TAB), on -> {
+            putBoolean(HIDE_INBOX_TAB, on);
+            restartNeeded();
+        });
+        toggle(context, navigation, "Keep bars shown while scrolling", () -> getBoolean(KEEP_BARS),
+                on -> putBoolean(KEEP_BARS, on));
+
+        PreferenceCategory videos = newCategory(context, screen, "Media");
+        toggle(context, videos, "Play media links inside Reddit", () -> getBoolean(MEDIA_LINKS),
+                on -> putBoolean(MEDIA_LINKS, on))
+                .setSummary(t("Opens imgur, Streamable, RedGIFs, Gfycat, Giphy, and direct image or video links in a player, for older posts Reddit shows as plain links."));
+        toggle(context, videos, "Hide the 18+ caution", () -> getBoolean(NO_NSFW_BLUR), on -> {
+            putBoolean(NO_NSFW_BLUR, on);
+            restartNeeded();
+        }).setSummary(t("Shows 18+ posts' images and videos without the blur and the tap to view."));
+        adopt(screen, videos, "morphe_remove_nsfw_dialog");
+        toggle(context, videos, "Captions on by default", () -> getBoolean(CAPTIONS_ON),
+                on -> putBoolean(CAPTIONS_ON, on))
+                .setSummary(t("Turns captions on each time Reddit starts; turning them off holds until Reddit restarts."));
+
+        // Morphe's own search switches (the Ask button, the Trending shelves) move into a Search screen of their own.
+        if (Branding.available()) {
+            PreferenceCategory branding = newCategory(context, screen, "Branding");
+            toggle(context, branding, "Morphe loading animation", () -> !getBoolean(REDDIT_LOADER), on -> {
+                putBoolean(REDDIT_LOADER, !on);
+                restartNeeded();
+            }).setSummary(t("Shows Morphe's animation in place of Reddit's while pages load."));
+            toggle(context, branding, "Morphe logo", () -> !getBoolean(REDDIT_LOGO), on -> {
+                putBoolean(REDDIT_LOGO, !on);
+                restartNeeded();
+            }).setSummary(t("Shows the Morphe logo in place of Reddit's Snoo, as in the search bar."));
+        }
+
+        PreferenceCategory search = newCategory(context, screen, "Search");
+        adopt(screen, search, "morphe_hide_ask_button");
+        adopt(screen, search, "morphe_hide_trending_shelves");
 
         PreferenceCategory sidebar = morpheCategory(context, screen, "morphe_hide_recently_visited_shelf",
                 "morphe_screen_sidebar_title", "Sidebar");
@@ -180,7 +219,8 @@ final class SettingsUi {
         for (int i = 0; i < SIDEBAR_KEYS.length; i++) {
             String row = SIDEBAR_KEYS[i];
             if (row.equals(SIDEBAR_RECENT) && morpheRecent != null) continue;
-            toggle(context, sidebar, SIDEBAR_SWITCH_TITLES[i], null,
+            String label = row.equals(SIDEBAR_RECENT) ? null : morpheString(context, row);
+            toggle(context, sidebar, label == null ? SIDEBAR_SWITCH_TITLES[i] : Strings.f("Hide %s", label),
                     () -> getSet(SIDEBAR_HIDDEN, Collections.emptySet()).contains(row),
                     on -> {
                         Set<String> rows = new HashSet<>(getSet(SIDEBAR_HIDDEN, Collections.emptySet()));
@@ -189,72 +229,183 @@ final class SettingsUi {
                         putSet(SIDEBAR_HIDDEN, rows);
                     });
         }
-        toggle(context, sidebar, "Hide sidebar button badge",
-                "Hides the orange dot on the three-line button. Restart the app to apply",
-                () -> getBoolean(HIDE_MENU_BADGE), on -> putBoolean(HIDE_MENU_BADGE, on));
+        toggle(context, sidebar, "Hide sidebar button badge", () -> getBoolean(HIDE_MENU_BADGE), on -> {
+            putBoolean(HIDE_MENU_BADGE, on);
+            restartNeeded();
+        });
+
+        addProfiles(context, screen);
+
+        nestCategories(context, manager, screen);
     }
+
+    // region Profiles
+
+    /**
+     * Named copies of every setting: the profile in use, a new one from the settings in force, renaming, deleting,
+     * and the profile each signed-in account switches to.
+     */
+    private static void addProfiles(Context context, PreferenceScreen screen) {
+        PreferenceCategory profiles = newCategory(context, screen, "Profiles");
+        placeAfter(screen, profiles, null);
+        item(context, profiles, "Profile in use", () -> profileLabel(Profiles.active()), p -> {
+            List<String> names = Profiles.names();
+            Dialogs.choose(context, t("Profile in use"), profileLabels(names), names.indexOf(Profiles.active()),
+                    which -> reopen(context, Profiles.switchTo(names.get(which))));
+        });
+        item(context, profiles, "New profile from these settings", () -> t("Copies the settings in force and switches to the copy."),
+                p -> askText(context, t("New profile from these settings"), "Name", name -> {
+                    if (Profiles.create(name)) reopen(context, false);
+                    else Dialogs.toast(context, t("That name is empty or taken"));
+                }));
+        item(context, profiles, "Rename this profile", () -> null, p -> {
+            String from = Profiles.active();
+            if (from.equals(Profiles.DEFAULT)) {
+                Dialogs.toast(context, t("The Default profile keeps its name"));
+                return;
+            }
+            askText(context, t("Rename this profile"), from, name -> {
+                if (Profiles.rename(from, name)) reopen(context, false);
+                else Dialogs.toast(context, t("That name is empty or taken"));
+            });
+        });
+        item(context, profiles, "Delete a profile", () -> null, p -> {
+            List<String> names = new ArrayList<>(Profiles.names());
+            names.remove(Profiles.DEFAULT);
+            names.remove(Profiles.active());
+            if (names.isEmpty()) {
+                Dialogs.toast(context, t("No profile to delete; the one in use and Default stay"));
+                return;
+            }
+            Dialogs.choose(context, t("Delete a profile"), names.toArray(new String[0]), -1,
+                    which -> {
+                        Profiles.delete(names.get(which));
+                        redraw();
+                    });
+        });
+        item(context, profiles, "Profile for each account", SettingsUi::assignedSummary, p -> {
+            Set<String> signedIn = new java.util.TreeSet<>(Accounts.names());
+            signedIn.addAll(Profiles.assigned().keySet());
+            String current = Profiles.currentAccount();
+            if (current != null) signedIn.add(current);
+            if (signedIn.isEmpty()) {
+                Dialogs.toast(context, t("No Reddit account is signed in"));
+                return;
+            }
+            List<String> accounts = new ArrayList<>(signedIn);
+            String[] labels = new String[accounts.size()];
+            for (int i = 0; i < labels.length; i++) {
+                String profile = Profiles.assigned().get(accounts.get(i));
+                labels[i] = "u/" + accounts.get(i) + " · " + (profile == null ? t("No profile") : profileLabel(profile));
+            }
+            Dialogs.choose(context, t("Profile for each account"), labels, -1, which -> {
+                String account = accounts.get(which);
+                List<String> names = Profiles.names();
+                String[] choices = new String[names.size() + 1];
+                choices[0] = t("No profile");
+                System.arraycopy(profileLabels(names), 0, choices, 1, names.size());
+                String profile = Profiles.assigned().get(account);
+                Dialogs.choose(context, "u/" + account, choices, profile == null ? 0 : names.indexOf(profile) + 1,
+                        pick -> {
+                            Profiles.assign(account, pick == 0 ? null : names.get(pick - 1));
+                            p.setSummary(assignedSummary());
+                            redraw();
+                        });
+            });
+        }).setSummary(assignedSummary());
+    }
+
+    private static String profileLabel(String name) {
+        return name.equals(Profiles.DEFAULT) ? t(Profiles.DEFAULT) : name;
+    }
+
+    private static String[] profileLabels(List<String> names) {
+        String[] labels = new String[names.size()];
+        for (int i = 0; i < labels.length; i++) labels[i] = profileLabel(names.get(i));
+        return labels;
+    }
+
+    private static String assignedSummary() {
+        Map<String, String> assigned = Profiles.assigned();
+        if (assigned.isEmpty()) return t("Each account keeps the profile in use.");
+        List<String> parts = new ArrayList<>();
+        for (Map.Entry<String, String> entry : assigned.entrySet()) {
+            parts.add("u/" + entry.getKey() + ": " + profileLabel(entry.getValue()));
+        }
+        return String.join(", ", parts);
+    }
+
+    /** Reloads the settings page with the profile's settings, and asks for a restart when Morphe's changed. */
+    private static void reopen(Context context, boolean morpheChanged) {
+        if (morpheChanged) restartNeeded();
+        if (context instanceof android.app.Activity) ((android.app.Activity) context).recreate();
+        else redraw();
+    }
+
+    // endregion
 
     // region Groups of rows
 
+    /**
+     * A row for each post type, set Off, On, or Only.
+     */
     private static void addTypes(Context context, PreferenceGroup group, Store modes, Runnable changed) {
-        SwitchPreference[] switches = new SwitchPreference[TYPE_KEYS.length];
-        Preference[] only = new Preference[1];
         for (int i = 0; i < TYPE_KEYS.length; i++) {
             String key = TYPE_KEYS[i];
-            switches[i] = toggle(context, group, TYPE_SWITCH_TITLES[i], null,
-                    () -> !MODE_HIDE.equals(modes.get(key)),
-                    on -> {
-                        modes.set(key, on ? MODE_SHOW : MODE_HIDE);
-                        if (only[0] != null) only[0].setSummary(onlySummary(modes));
-                        run(changed);
-                    });
+            threeWay(context, group, null, TYPE_LABELS[i], () -> modes.get(key), mode -> {
+                modes.set(key, mode);
+                run(changed);
+            });
         }
-        only[0] = item(context, group, "Show only these post types", () -> onlySummary(modes),
-                p -> chooseOnly(context, p, modes, switches, changed));
     }
 
     private static void addRanges(Context context, PreferenceGroup group, Store bounds, Runnable changed) {
-        item(context, group, "Score (upvotes)", () -> rangeSummary(bounds, POST_SCORE_MIN, POST_SCORE_MAX),
-                p -> editRange(context, p, "Score (upvotes)", bounds, POST_SCORE_MIN, POST_SCORE_MAX, changed));
+        item(context, group, "Score", () -> rangeSummary(bounds, POST_SCORE_MIN, POST_SCORE_MAX),
+                p -> editRange(context, p, "Score", bounds, POST_SCORE_MIN, POST_SCORE_MAX, changed));
         item(context, group, "Number of comments",
                 () -> rangeSummary(bounds, POST_COMMENTS_MIN, POST_COMMENTS_MAX),
                 p -> editRange(context, p, "Number of comments", bounds, POST_COMMENTS_MIN, POST_COMMENTS_MAX,
                         changed));
     }
 
-    private static void addTopics(Context context, PreferenceManager manager, PreferenceGroup parent) {
-        PreferenceScreen topics = manager.createPreferenceScreen(context);
-        topics.setTitle("Hide communities by topic");
-        parent.addPreference(topics);
-        topics.setSummary(topicsSummary());
-        Runnable changed = () -> topics.setSummary(topicsSummary());
-
-        PreferenceCategory lists = newCategory(context, topics, "Built-in lists");
-        for (int i = 0; i < Topics.KEYS.length; i++) {
-            String key = Topics.KEYS[i];
-            CheckBoxPreference box = new CheckBoxPreference(context);
-            box.setPersistent(false);
-            box.setTitle(Topics.LABELS[i]);
-            box.setSummary("Hides communities whose names contain " + Topics.patterns(i));
-            lists.addPreference(box);
-            box.setChecked(Topics.chosen(getSet(TOPICS, Collections.emptySet()), key));
-            box.setOnPreferenceChangeListener((p, value) -> {
-                Set<String> chosen = new HashSet<>(getSet(TOPICS, Collections.emptySet()));
-                chosen.remove(key);
-                if (key.equals("fascism")) chosen.remove(Topics.LEGACY_NAZISM);
-                if ((Boolean) value) chosen.add(key);
-                putSet(TOPICS, chosen);
-                changed.run();
-                return true;
+    /**
+     * A screen of checkboxes choosing a set of keys.
+     */
+    private static void addChecks(Context context, PreferenceManager manager, PreferenceGroup parent, String title,
+                                  String setKey, String[] keys, String[] labels, Supplier<Set<String>> current,
+                                  String none) {
+        PreferenceScreen checks = screen(context, manager, parent, title);
+        checks.setSummary(labelsOf(current.get(), keys, labels, none));
+        for (int i = 0; i < keys.length; i++) {
+            String key = keys[i];
+            check(context, checks, labels[i], current.get().contains(key), on -> {
+                Set<String> chosen = new HashSet<>(current.get());
+                if (on) chosen.add(key);
+                else chosen.remove(key);
+                putSet(setKey, chosen);
+                checks.setSummary(labelsOf(chosen, keys, labels, none));
+                redraw();
             });
         }
-        Preference note = new Preference(context);
-        note.setSelectable(false);
-        note.setSummary("A name containing " + Topics.exceptions() + " is never hidden by a built-in list.");
-        lists.addPreference(note);
+    }
 
-        PreferenceCategory own = newCategory(context, topics, "Your own list");
-        item(context, own, "Communities to hide", SettingsUi::topicExtraSummary,
+    private static void addTopics(Context context, PreferenceManager manager, PreferenceGroup parent) {
+        PreferenceScreen topics = screen(context, manager, parent, "Hide communities by topic");
+        topics.setSummary(topicsSummary());
+        Runnable changed = () -> topics.setSummary(topicsSummary());
+        for (int i = 0; i < Topics.KEYS.length; i++) {
+            String key = Topics.KEYS[i];
+            check(context, topics, Topics.LABELS[i], Topics.chosen(getSet(TOPICS, Collections.emptySet()), key),
+                    on -> {
+                        Set<String> chosen = new HashSet<>(getSet(TOPICS, Collections.emptySet()));
+                        chosen.remove(key);
+                        if (key.equals("fascism")) chosen.remove(Topics.LEGACY_NAZISM);
+                        if (on) chosen.add(key);
+                        putSet(TOPICS, chosen);
+                        run(changed);
+                    });
+        }
+        item(context, topics, "Your own list", SettingsUi::topicExtraSummary,
                 p -> editTopicExtra(context, p, changed));
     }
 
@@ -263,199 +414,128 @@ final class SettingsUi {
      */
     private static void addScopeList(Context context, PreferenceManager manager, PreferenceGroup parent, String kind) {
         boolean community = kind.equals("r/");
-        PreferenceScreen list = manager.createPreferenceScreen(context);
-        list.setTitle(community ? "Subreddit filters" : "Profile filters");
-        parent.addPreference(list);
+        PreferenceScreen list = screen(context, manager, parent, community ? "Subreddit filters" : "Profile filters");
         list.setSummary(listSummary(kind));
-
-        PreferenceCategory scopes = newCategory(context, list,
-                community ? "Subreddits with filters" : "Profiles with filters");
         Runnable listChanged = () -> list.setSummary(listSummary(kind));
-        Preference add = new Preference(context);
-        add.setTitle(community ? "Add a subreddit" : "Add a profile");
-        add.setSummary(community
-                ? "Filters for one subreddit's posts, wherever they appear"
-                : "Filters for one account's posts, wherever they appear");
-        add.setOrder(-1);
-        list.addPreference(add);
-        add.setOnPreferenceClickListener(p -> {
-            askText(context, add.getTitle().toString(), community ? "r/name" : "u/name", text -> {
-                String name = text.trim().toLowerCase(java.util.Locale.ROOT);
-                if (name.startsWith(kind)) name = name.substring(2);
-                if (name.isEmpty() || name.contains(" ") || name.contains("/")) return;
-                String scope = Rules.scopeKey(kind + name);
-                if (scopes.findPreference(scope) != null) return;
-                Scopes.save(scope, Scopes.edit(scope));
-                addScope(context, manager, scopes, scope, listChanged);
-                listChanged.run();
-            });
-            return true;
-        });
-        for (String scope : Scopes.scopes(kind)) addScope(context, manager, scopes, scope, listChanged);
+        String addTitle = community ? "Add a subreddit" : "Add a profile";
+        item(context, list, addTitle, () -> null, p -> askText(context, addTitle, kind + "name", text -> {
+            String name = text.trim().toLowerCase(Locale.ROOT);
+            if (name.startsWith(kind)) name = name.substring(2);
+            if (name.isEmpty() || name.contains(" ") || name.contains("/")) return;
+            String scope = Rules.scopeKey(kind + name);
+            if (list.findPreference(scope) != null) return;
+            Scopes.save(scope, Scopes.edit(scope));
+            addScope(context, manager, list, scope, listChanged);
+            run(listChanged);
+        }));
+        for (String scope : Scopes.scopes(kind)) addScope(context, manager, list, scope, listChanged);
     }
 
-    private static void addScope(Context context, PreferenceManager manager, PreferenceCategory parent, String scope,
+    private static void addScope(Context context, PreferenceManager manager, PreferenceGroup parent, String scope,
                                  Runnable listChanged) {
         boolean community = scope.startsWith("r/");
-        PreferenceScreen screen = manager.createPreferenceScreen(context);
+        PreferenceScreen screen = screen(context, manager, parent, scope);
         screen.setKey(scope);
-        screen.setTitle(scope);
-        screen.setPersistent(false);
-        parent.addPreference(screen);
         screen.setSummary(scopeSummary(scope));
         Runnable changed = () -> {
             screen.setSummary(scopeSummary(scope));
-            listChanged.run();
+            run(listChanged);
         };
 
-        toggle(context, screen, community ? "Hide all posts from " + scope : "Hide all posts and comments by " + scope,
-                null, () -> Scopes.hiddenWhole(scope), on -> {
+        toggle(context, screen, community ? "Hide all posts" : "Hide all posts and comments",
+                () -> Scopes.hiddenWhole(scope), on -> {
                     Scopes.setHiddenWhole(scope, on);
-                    changed.run();
+                    run(changed);
                 });
-        String where = community ? "in " + scope : "by " + scope;
         item(context, screen, "Keywords to hide", () -> rulesSummary(Scopes.rulesOf(POST_RULES, scope)),
-                p -> editRules(context, p, POST_RULES, scope, "Keywords to hide",
-                        "Rules for posts " + where + ". " + RULE_LINES, changed));
+                p -> editRules(context, p, POST_RULES, scope, "Keywords to hide", RULE_HELP, changed));
         item(context, screen, "Comment keywords to hide", () -> rulesSummary(Scopes.rulesOf(COMMENT_RULES, scope)),
-                p -> editRules(context, p, COMMENT_RULES, scope, "Comment keywords to hide",
-                        "Rules for comments " + where + ". " + COMMENT_HELP, changed));
+                p -> editRules(context, p, COMMENT_RULES, scope, "Comment keywords to hide", COMMENT_HELP, changed));
+        addRanges(context, screen, scopeBounds(scope), changed);
 
         PreferenceCategory types = newCategory(context, screen, "Post types");
         addTypes(context, types, scopeModes(scope), changed);
 
         if (community) {
-            String name = scope.substring(2);
             PreferenceCategory flairs = newCategory(context, screen, "Flairs");
-            List<String> known = Scopes.flairsOf(name, Scopes.edit(scope));
-            if (known.isEmpty()) {
-                Preference none = new Preference(context);
-                none.setSelectable(false);
-                none.setSummary("No flairs seen in " + scope + " yet. Its flairs are listed here once its posts "
-                        + "load, or add one by name.");
-                flairs.addPreference(none);
+            for (String flair : Scopes.flairsOf(scope.substring(2), Scopes.edit(scope))) {
+                addFlair(context, flairs, scope, flair, changed);
             }
-            for (String flair : known) addFlair(context, flairs, scope, flair, changed);
-            Preference addFlair = new Preference(context);
-            addFlair.setTitle("Add a flair");
-            flairs.addPreference(addFlair);
-            addFlair.setOnPreferenceClickListener(p -> {
-                askText(context, "Add a flair", "Flair", text -> {
-                    String flair = text.trim().toLowerCase(java.util.Locale.ROOT);
-                    if (flair.isEmpty() || flairs.findPreference("flair:" + flair) != null) return;
-                    Preference row = addFlair(context, flairs, scope, flair, changed);
-                    chooseFlair(context, row, scope, flair, changed);
-                });
-                return true;
-            });
+            item(context, flairs, "Add a flair", () -> null, p -> askText(context, "Add a flair", "Flair", text -> {
+                String flair = Rules.flairKey(text);
+                if (flair.isEmpty() || flairs.findPreference("flair:" + flair) != null) return;
+                addFlair(context, flairs, scope, flair, changed).getOnPreferenceClickListener()
+                        .onPreferenceClick(flairs.findPreference("flair:" + flair));
+            }));
         }
 
-        PreferenceCategory ranges = newCategory(context, screen, "Ranges");
-        addRanges(context, ranges, scopeBounds(scope), changed);
-
-        Preference remove = new Preference(context);
-        remove.setTitle("Remove all filters for " + scope);
-        screen.addPreference(remove);
-        remove.setOnPreferenceClickListener(p -> {
-            new AlertDialog.Builder(context)
-                    .setTitle(remove.getTitle())
-                    .setMessage("Every filter of " + scope + " is deleted.")
-                    .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                        Scopes.clear(scope);
-                        Dialog open = screen.getDialog();
-                        if (open != null) open.dismiss();
-                        parent.removePreference(screen);
-                        listChanged.run();
-                    })
-                    .setNegativeButton(android.R.string.cancel, null)
-                    .show();
-            return true;
-        });
+        Preference remove = item(context, screen, "Remove all filters", () -> null, p ->
+                Dialogs.show(context, Strings.f("Remove all filters for %s?", scope), null, Collections.emptyList(), () -> {
+                    Scopes.clear(scope);
+                    Dialog open = screen.getDialog();
+                    if (open != null) open.dismiss();
+                    parent.removePreference(screen);
+                    run(listChanged);
+                }, null, null));
+        remove.setOrder(Integer.MAX_VALUE);
     }
 
     private static Preference addFlair(Context context, PreferenceGroup group, String scope, String flair,
                                        Runnable changed) {
-        Preference row = new Preference(context);
-        row.setKey("flair:" + flair);
-        row.setPersistent(false);
-        row.setTitle(flair);
-        group.addPreference(row);
-        row.setSummary(flairLabel(Scopes.edit(scope).flairMode(flair)));
-        row.setOnPreferenceClickListener(p -> {
-            chooseFlair(context, p, scope, flair, changed);
-            return true;
+        return threeWay(context, group, "flair:" + flair, flair, () -> Scopes.edit(scope).flairMode(flair), mode -> {
+            Scopes.Entry entry = Scopes.edit(scope);
+            Scopes.Entry.setMode(entry.flairs, flair, mode);
+            Scopes.save(scope, entry);
+            run(changed);
         });
-        return row;
-    }
-
-    private static void chooseFlair(Context context, Preference row, String scope, String flair, Runnable changed) {
-        int current = Arrays.asList(FLAIR_MODES).indexOf(Scopes.edit(scope).flairMode(flair));
-        new AlertDialog.Builder(context)
-                .setTitle(flair)
-                .setSingleChoiceItems(FLAIR_LABELS, current, (dialog, which) -> {
-                    Scopes.Entry entry = Scopes.edit(scope);
-                    Scopes.Entry.setMode(entry.flairs, flair, FLAIR_MODES[which]);
-                    Scopes.save(scope, entry);
-                    row.setSummary(FLAIR_LABELS[which]);
-                    run(changed);
-                    dialog.dismiss();
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
     }
 
     // endregion
 
     // region Summaries
 
-    private static String flairLabel(String mode) {
-        int index = Arrays.asList(FLAIR_MODES).indexOf(mode);
-        return FLAIR_LABELS[index < 0 ? 1 : index];
+    private static String modeLabel(String mode) {
+        int index = Arrays.asList(MODES).indexOf(mode);
+        return t(MODE_LABELS[index < 0 ? 1 : index]);
     }
 
     private static String rulesSummary(List<String> lines) {
         int count = lines.size();
-        return count == 0 ? "No rules" : count + (count == 1 ? " rule" : " rules");
+        return count == 0 ? t("None") : Strings.count(count, "rule", "rules");
     }
 
-    private static String onlySummary(Store modes) {
-        List<String> names = new ArrayList<>();
+    private static String typesSummary(Store modes) {
+        List<String> parts = new ArrayList<>();
         for (int i = 0; i < TYPE_KEYS.length; i++) {
-            if (MODE_ONLY.equals(modes.get(TYPE_KEYS[i]))) names.add(TYPE_LABELS[i]);
+            String mode = modes.get(TYPE_KEYS[i]);
+            if (!MODE_SHOW.equals(mode)) parts.add(t(TYPE_LABELS[i]) + ": " + modeLabel(mode));
         }
-        return names.isEmpty() ? "No limit" : "Only: " + String.join(", ", names);
-    }
-
-    private static String fieldsSummary() {
-        return labelsOf(fields(), FIELD_KEYS, FIELD_LABELS, "Nothing (keyword rules match no post)");
-    }
-
-    private static String placesSummary() {
-        return labelsOf(places(), PLACE_KEYS, PLACE_LABELS, "Nowhere (post filters are off)");
+        return parts.isEmpty() ? t("All on") : String.join(", ", parts);
     }
 
     private static String labelsOf(Set<String> chosen, String[] keys, String[] labels, String none) {
         List<String> names = new ArrayList<>();
         for (int i = 0; i < keys.length; i++) {
-            if (chosen.contains(keys[i])) names.add(labels[i]);
+            if (chosen.contains(keys[i])) names.add(t(labels[i]));
         }
-        return names.isEmpty() ? none : String.join(", ", names);
+        if (names.size() == keys.length) return t("All");
+        return names.isEmpty() ? t(none) : String.join(", ", names);
     }
 
     private static String topicsSummary() {
         Set<String> topics = getSet(TOPICS, Collections.emptySet());
         List<String> names = new ArrayList<>();
         for (int i = 0; i < Topics.KEYS.length; i++) {
-            if (Topics.chosen(topics, Topics.KEYS[i])) names.add(Topics.LABELS[i]);
+            if (Topics.chosen(topics, Topics.KEYS[i])) names.add(t(Topics.LABELS[i]));
         }
         int extra = Filter.topicExtra().size();
-        if (extra > 0) names.add(extra + (extra == 1 ? " community" : " communities") + " of your own list");
-        return names.isEmpty() ? "None hidden" : "Hidden: " + String.join("; ", names);
+        if (extra > 0) names.add(t("your list"));
+        return names.isEmpty() ? t("None") : String.join("; ", names);
     }
 
     private static String topicExtraSummary() {
         int count = Filter.topicExtra().size();
-        return count == 0 ? "None" : count + (count == 1 ? " community" : " communities");
+        return count == 0 ? t("None") : Strings.count(count, "community", "communities");
     }
 
     private static Long parseBound(String value) {
@@ -468,55 +548,49 @@ final class SettingsUi {
         }
     }
 
+    /**
+     * The range of values shown: "Any", "50 or more", "10 or fewer", or "5 to 50".
+     */
     private static String rangeSummary(Store bounds, String minKey, String maxKey) {
         Long min = parseBound(bounds.get(minKey));
         Long max = parseBound(bounds.get(maxKey));
-        if (min == null && max == null) return "All shown";
-        if (max == null) return "Shown: " + min + " or more; the rest hidden";
-        if (min == null) return "Shown: " + max + " or fewer; the rest hidden";
-        return "Shown: " + min + " to " + max + "; the rest hidden";
+        if (min == null && max == null) return t("Any");
+        if (max == null) return Strings.f("%s or more", min);
+        if (min == null) return Strings.f("%s or fewer", max);
+        return Strings.f("%s to %s", min, max);
     }
 
     private static String listSummary(String kind) {
         List<String> scopes = new ArrayList<>(Scopes.scopes(kind));
-        if (scopes.isEmpty()) return "None";
+        if (scopes.isEmpty()) return t("None");
         String first = String.join(", ", scopes.subList(0, Math.min(3, scopes.size())));
-        return scopes.size() <= 3 ? first : first + ", and " + (scopes.size() - 3) + " more";
+        return scopes.size() <= 3 ? first : Strings.f("%s, and %s more", first, scopes.size() - 3);
     }
 
     /**
-     * One line naming every filter of a subreddit or profile.
+     * One short line naming the filters of a subreddit or profile.
      */
     static String scopeSummary(String scope) {
         List<String> parts = new ArrayList<>();
-        if (Scopes.hiddenWhole(scope)) parts.add(scope.startsWith("r/") ? "All posts hidden" : "All posts and comments hidden");
-        int posts = Scopes.rulesOf(POST_RULES, scope).size();
-        if (posts > 0) parts.add(posts + (posts == 1 ? " keyword rule" : " keyword rules"));
-        int comments = Scopes.rulesOf(COMMENT_RULES, scope).size();
-        if (comments > 0) parts.add(comments + (comments == 1 ? " comment rule" : " comment rules"));
+        if (Scopes.hiddenWhole(scope)) parts.add(t("all hidden"));
+        int posts = Scopes.rulesOf(POST_RULES, scope).size() + Scopes.rulesOf(COMMENT_RULES, scope).size();
+        if (posts > 0) parts.add(Strings.count(posts, "rule", "rules"));
         Scopes.Entry entry = Scopes.all().get(scope);
         if (entry != null) {
-            List<String> hidden = new ArrayList<>();
-            List<String> only = new ArrayList<>();
-            for (int i = 0; i < TYPE_KEYS.length; i++) {
-                String mode = entry.mode(TYPE_KEYS[i]);
-                if (MODE_HIDE.equals(mode)) hidden.add(TYPE_LABELS[i]);
-                if (MODE_ONLY.equals(mode)) only.add(TYPE_LABELS[i]);
-            }
+            int types = 0;
+            for (String key : TYPE_KEYS) if (!MODE_SHOW.equals(entry.mode(key))) types++;
+            if (types > 0) parts.add(Strings.count(types, "post type", "post types"));
+            int flairs = 0;
             for (Map.Entry<String, String> flair : entry.flairs.entrySet()) {
-                if (MODE_HIDE.equals(flair.getValue())) hidden.add("flair " + flair.getKey());
-                if (MODE_ONLY.equals(flair.getValue())) only.add("flair " + flair.getKey());
+                if (!MODE_SHOW.equals(flair.getValue())) flairs++;
             }
-            if (!hidden.isEmpty()) parts.add("hidden: " + String.join(", ", hidden));
-            if (!only.isEmpty()) parts.add("only: " + String.join(", ", only));
+            if (flairs > 0) parts.add(Strings.count(flairs, "flair", "flairs"));
             Store bounds = scopeBounds(scope);
-            String score = rangeSummary(bounds, POST_SCORE_MIN, POST_SCORE_MAX);
-            if (!score.equals("All shown")) parts.add("score " + score.replace("Shown: ", "").replace("; the rest hidden", ""));
-            String count = rangeSummary(bounds, POST_COMMENTS_MIN, POST_COMMENTS_MAX);
-            if (!count.equals("All shown")) parts.add("comments " + count.replace("Shown: ", "").replace("; the rest hidden", ""));
+            if (!rangeSummary(bounds, POST_SCORE_MIN, POST_SCORE_MAX).equals(t("Any"))) parts.add(t("score"));
+            if (!rangeSummary(bounds, POST_COMMENTS_MIN, POST_COMMENTS_MAX).equals(t("Any"))) parts.add(t("comments"));
         }
-        if (parts.isEmpty()) return "No filters";
-        String text = String.join("; ", parts);
+        if (parts.isEmpty()) return t("No filters");
+        String text = String.join(", ", parts);
         return Character.toUpperCase(text.charAt(0)) + text.substring(1);
     }
 
@@ -524,15 +598,55 @@ final class SettingsUi {
 
     // region Rows and dialogs
 
+    /**
+     * Asks Morphe's settings screen for its restart dialog when the screen closes, as Morphe's own switches
+     * needing a restart do.
+     */
+    private static void restartNeeded() {
+        try {
+            Class.forName("app.morphe.extension.shared.settings.preference.AbstractPreferenceFragment")
+                    .getMethod("setRestartNeeded").invoke(null);
+        } catch (Exception ex) {
+            Log.e(TAG, "Could not ask for Morphe's restart dialog", ex);
+        }
+    }
+
+    /**
+     * Every screen of these settings: the Morphe page and each nested screen. Android redraws a nested screen's
+     * summary in its parent list only when the parent's adapter is told the data changed.
+     */
+    private static final List<PreferenceScreen> SCREENS = new ArrayList<>();
+
+    private static void redraw() {
+        for (PreferenceScreen screen : SCREENS) {
+            if (screen.getRootAdapter() instanceof BaseAdapter) ((BaseAdapter) screen.getRootAdapter()).notifyDataSetChanged();
+        }
+    }
+
     private static void run(Runnable runnable) {
         if (runnable != null) runnable.run();
+        redraw();
     }
 
     private static PreferenceCategory newCategory(Context context, PreferenceGroup group, String title) {
         PreferenceCategory category = new PreferenceCategory(context);
-        category.setTitle(title);
+        category.setTitle(t(title));
         group.addPreference(category);
         return category;
+    }
+
+    /**
+     * A nested screen, opened with a toolbar like Morphe's settings page.
+     */
+    private static PreferenceScreen screen(Context context, PreferenceManager manager, PreferenceGroup parent,
+                                           String title) {
+        PreferenceScreen screen = manager.createPreferenceScreen(context);
+        screen.setTitle(t(title));
+        screen.setPersistent(false);
+        parent.addPreference(screen);
+        Dialogs.screen(screen);
+        SCREENS.add(screen);
+        return screen;
     }
 
     /**
@@ -554,6 +668,15 @@ final class SettingsUi {
     private static String morpheString(Context context, String name) {
         int id = context.getResources().getIdentifier(name, "string", context.getPackageName());
         return id == 0 ? null : context.getString(id);
+    }
+
+    /** Moves Morphe's preference {@code key}, wherever its category holds it, into {@code target}. */
+    private static void adopt(PreferenceScreen screen, PreferenceCategory target, String key) {
+        PreferenceCategory holder = categoryHolding(screen, key);
+        if (holder == null || holder == target) return;
+        Preference preference = holder.findPreference(key);
+        holder.removePreference(preference);
+        target.addPreference(preference);
     }
 
     private static PreferenceCategory categoryTitled(Context context, PreferenceScreen screen, String titleName) {
@@ -579,14 +702,14 @@ final class SettingsUi {
         category = categoryTitled(context, screen, titleName);
         if (category != null) return category;
         String title = morpheString(context, titleName);
-        return newCategory(context, screen, title == null ? fallback : title);
+        return newCategory(context, screen, title == null ? t(fallback) : title);
     }
 
     /**
      * Moves {@code category} right after {@code anchor} (to the top when anchor is null); the screen sorts its
      * categories by order when the list is drawn.
      */
-    private static void placeAfter(PreferenceScreen screen, PreferenceCategory category, Preference anchor) {
+    private static void placeAfter(PreferenceScreen screen, Preference category, Preference anchor) {
         int base = anchor == null ? -1 : anchor.getOrder();
         for (int i = 0; i < screen.getPreferenceCount(); i++) {
             Preference child = screen.getPreference(i);
@@ -595,9 +718,36 @@ final class SettingsUi {
         category.setOrder(base + 1);
     }
 
+    /**
+     * Turns each category of the main list into a row opening a screen of its own, holding the category's rows, the
+     * layout of Morphe's YouTube settings.
+     */
+    private static void nestCategories(Context context, PreferenceManager manager, PreferenceScreen root) {
+        List<PreferenceCategory> categories = new ArrayList<>();
+        for (int i = 0; i < root.getPreferenceCount(); i++) {
+            Preference child = root.getPreference(i);
+            if (child instanceof PreferenceCategory) categories.add((PreferenceCategory) child);
+        }
+        for (PreferenceCategory category : categories) {
+            int order = category.getOrder();
+            CharSequence title = category.getTitle();
+            List<Preference> rows = new ArrayList<>();
+            for (int i = 0; i < category.getPreferenceCount(); i++) rows.add(category.getPreference(i));
+            root.removePreference(category);
+            if (rows.isEmpty()) continue;
+            PreferenceScreen nested = screen(context, manager, root, title == null ? "" : title.toString());
+            nested.setOrder(order);
+            if (category.getKey() != null) nested.setKey(category.getKey() + "_screen");
+            for (Preference row : rows) {
+                category.removePreference(row);
+                nested.addPreference(row);
+            }
+        }
+    }
+
     private static Preference item(Context context, PreferenceGroup group, String title, Summary summary, Click click) {
         Preference preference = new Preference(context);
-        preference.setTitle(title);
+        preference.setTitle(t(title));
         preference.setPersistent(false);
         group.addPreference(preference);
         preference.setSummary(summary.get());
@@ -613,14 +763,34 @@ final class SettingsUi {
     }
 
     /**
+     * A row set Off, On, or Only from Morphe's list dialog, its summary the setting chosen.
+     */
+    private static Preference threeWay(Context context, PreferenceGroup group, String key, String title,
+                                       Supplier<String> get, java.util.function.Consumer<String> set) {
+        Preference row = new Preference(context);
+        if (key != null) row.setKey(key);
+        row.setPersistent(false);
+        row.setTitle(t(title));
+        group.addPreference(row);
+        row.setSummary(modeLabel(get.get()));
+        row.setOnPreferenceClickListener(p -> {
+            Dialogs.choose(context, t(title), t(MODE_LABELS), Arrays.asList(MODES).indexOf(get.get()), which -> {
+                set.accept(MODES[which]);
+                row.setSummary(t(MODE_LABELS[which]));
+            });
+            return true;
+        });
+        return row;
+    }
+
+    /**
      * A switch like Morphe's own, stored in this bundle's settings file.
      */
-    private static SwitchPreference toggle(Context context, PreferenceGroup group, String title, String summary,
-                                           Getter getter, Setter setter) {
+    private static SwitchPreference toggle(Context context, PreferenceGroup group, String title, Getter getter,
+                                           Setter setter) {
         SwitchPreference preference = new SwitchPreference(context);
         preference.setPersistent(false);
-        preference.setTitle(title);
-        if (summary != null) preference.setSummary(summary);
+        preference.setTitle(t(title));
         group.addPreference(preference);
         preference.setChecked(getter.get());
         preference.setOnPreferenceChangeListener((p, value) -> {
@@ -634,153 +804,109 @@ final class SettingsUi {
         return preference;
     }
 
-    private static int dp(Context context, int value) {
-        return (int) (value * context.getResources().getDisplayMetrics().density);
+    private static CheckBoxPreference check(Context context, PreferenceGroup group, String title, boolean checked,
+                                            Setter setter) {
+        CheckBoxPreference box = new CheckBoxPreference(context);
+        box.setPersistent(false);
+        box.setTitle(t(title));
+        group.addPreference(box);
+        box.setChecked(checked);
+        box.setOnPreferenceChangeListener((p, value) -> {
+            try {
+                setter.set((Boolean) value);
+            } catch (Exception ex) {
+                Log.e(TAG, "Settings checkbox failure", ex);
+            }
+            return true;
+        });
+        return box;
     }
 
-    private static LinearLayout layout(Context context, String help) {
-        LinearLayout layout = new LinearLayout(context);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(dp(context, 20), dp(context, 8), dp(context, 20), 0);
-        if (help != null) {
-            TextView text = new TextView(context);
-            text.setText(help);
-            text.setTextIsSelectable(true);
-            layout.addView(text);
-        }
-        return layout;
+    private static EditText multiLine(Context context, String text, String hint) {
+        EditText editor = Dialogs.editText(context);
+        editor.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        editor.setSingleLine(false);
+        editor.setMinLines(4);
+        editor.setText(text);
+        editor.setHint(t(hint));
+        return editor;
     }
 
     private static void askText(Context context, String title, String hint, Text done) {
-        EditText editor = new EditText(context);
+        EditText editor = Dialogs.editText(context);
         editor.setSingleLine(true);
-        editor.setHint(hint);
-        LinearLayout layout = layout(context, null);
-        layout.addView(editor);
-        new AlertDialog.Builder(context)
-                .setTitle(title)
-                .setView(layout)
-                .setPositiveButton(android.R.string.ok, (dialog, which) -> done.on(editor.getText().toString()))
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
+        editor.setHint(t(hint));
+        Dialogs.show(context, title, null, Collections.singletonList(editor),
+                () -> done.on(editor.getText().toString()), null, null);
     }
 
     private static void editRules(Context context, Preference preference, String listKey, String scope, String title,
                                   String help, Runnable changed) {
-        EditText editor = new EditText(context);
-        editor.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-        editor.setSingleLine(false);
-        editor.setMinLines(4);
-        editor.setText(String.join("\n", Scopes.rulesOf(listKey, scope)));
-        editor.setHint(scope.isEmpty() ? "r/community\nu/account\nflair:Meme\n\"whole phrase\"\nany text"
-                : "\"whole phrase\"\nany text\nflair:Meme");
-        LinearLayout layout = layout(context, help);
-        layout.addView(editor);
-        new AlertDialog.Builder(context)
-                .setTitle(title)
-                .setView(layout)
-                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                    Scopes.setRulesOf(listKey, scope, editor.getText().toString());
-                    preference.setSummary(rulesSummary(Scopes.rulesOf(listKey, scope)));
-                    run(changed);
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
-    }
-
-    private static void chooseSet(Context context, Preference preference, String title, String key, String[] keys,
-                                  String[] labels, Set<String> current, Summary summary) {
-        boolean[] checked = new boolean[keys.length];
-        for (int i = 0; i < keys.length; i++) checked[i] = current.contains(keys[i]);
-        new AlertDialog.Builder(context)
-                .setTitle(title)
-                .setMultiChoiceItems(labels, checked, (dialog, which, isChecked) -> checked[which] = isChecked)
-                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                    Set<String> chosen = new HashSet<>();
-                    for (int i = 0; i < keys.length; i++) if (checked[i]) chosen.add(keys[i]);
-                    putSet(key, chosen);
-                    preference.setSummary(summary.get());
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
-    }
-
-    private static void chooseOnly(Context context, Preference preference, Store modes, SwitchPreference[] switches,
-                                   Runnable changed) {
-        boolean[] checked = new boolean[TYPE_KEYS.length];
-        for (int i = 0; i < TYPE_KEYS.length; i++) checked[i] = MODE_ONLY.equals(modes.get(TYPE_KEYS[i]));
-        new AlertDialog.Builder(context)
-                .setTitle("Show only these post types")
-                .setMultiChoiceItems(TYPE_LABELS, checked, (dialog, which, isChecked) -> checked[which] = isChecked)
-                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                    for (int i = 0; i < TYPE_KEYS.length; i++) {
-                        if (checked[i]) {
-                            modes.set(TYPE_KEYS[i], MODE_ONLY);
-                            switches[i].setChecked(true);
-                        } else if (MODE_ONLY.equals(modes.get(TYPE_KEYS[i]))) {
-                            modes.set(TYPE_KEYS[i], MODE_SHOW);
-                        }
-                    }
-                    preference.setSummary(onlySummary(modes));
-                    run(changed);
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
+        EditText editor = multiLine(context, String.join("\n", Scopes.rulesOf(listKey, scope)), "");
+        Dialogs.show(context, title, help, Collections.singletonList(editor), () -> {
+            Scopes.setRulesOf(listKey, scope, editor.getText().toString());
+            preference.setSummary(rulesSummary(Scopes.rulesOf(listKey, scope)));
+            run(changed);
+        }, null, null);
     }
 
     private static void editRange(Context context, Preference preference, String title, Store bounds, String minKey,
                                   String maxKey, Runnable changed) {
-        EditText min = new EditText(context);
+        EditText min = Dialogs.editText(context);
         min.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_SIGNED);
-        min.setHint("Lowest shown (blank: no lower bound)");
+        min.setHint(t("Lowest shown"));
         min.setText(bounds.get(minKey));
-        EditText max = new EditText(context);
+        EditText max = Dialogs.editText(context);
         max.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_SIGNED);
-        max.setHint("Highest shown (blank: no upper bound)");
+        max.setHint(t("Highest shown"));
         max.setText(bounds.get(maxKey));
-        LinearLayout layout = layout(context, "Posts outside this range are hidden. Leave a box blank for no "
-                + "bound. A count the app shows rounded (for example 1.2k) is compared as 1,200.");
-        layout.addView(min);
-        layout.addView(max);
-        new AlertDialog.Builder(context)
-                .setTitle(title)
-                .setView(layout)
-                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                    bounds.set(minKey, min.getText().toString().trim());
-                    bounds.set(maxKey, max.getText().toString().trim());
-                    preference.setSummary(rangeSummary(bounds, minKey, maxKey));
-                    run(changed);
-                })
-                .setNeutralButton("Clear", (dialog, which) -> {
-                    bounds.set(minKey, "");
-                    bounds.set(maxKey, "");
-                    preference.setSummary(rangeSummary(bounds, minKey, maxKey));
-                    run(changed);
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
+        Runnable save = () -> {
+            preference.setSummary(rangeSummary(bounds, minKey, maxKey));
+            run(changed);
+        };
+        Dialogs.show(context, title, null, Arrays.<View>asList(min, max), () -> {
+            bounds.set(minKey, min.getText().toString().trim());
+            bounds.set(maxKey, max.getText().toString().trim());
+            save.run();
+        }, "Clear", () -> {
+            bounds.set(minKey, "");
+            bounds.set(maxKey, "");
+            save.run();
+        });
     }
 
     private static void editTopicExtra(Context context, Preference preference, Runnable changed) {
-        EditText editor = new EditText(context);
-        editor.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
-        editor.setSingleLine(false);
-        editor.setMinLines(4);
-        editor.setText(getString(TOPIC_EXTRA, ""));
-        editor.setHint("r/community");
-        LinearLayout layout = layout(context, "Communities to hide, one a line, in addition to the built-in lists "
-                + "checked.");
-        layout.addView(editor);
-        new AlertDialog.Builder(context)
-                .setTitle("Communities to hide")
-                .setView(layout)
-                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
-                    putString(TOPIC_EXTRA, editor.getText().toString().trim());
+        EditText editor = multiLine(context, getString(TOPIC_EXTRA, ""), "r/name");
+        List<View> views = new ArrayList<>();
+        views.add(editor);
+        // The communities opened lately and not on the list yet, each a box to tick.
+        Set<String> listed = Filter.topicExtra();
+        List<android.widget.CheckBox> boxes = new ArrayList<>();
+        for (String name : RecentCommunities.list()) {
+            if (boxes.size() >= 12 || listed.contains(name.toLowerCase(Locale.ROOT).replace("_", ""))) continue;
+            android.widget.CheckBox box = new android.widget.CheckBox(context);
+            box.setText("r/" + name);
+            boxes.add(box);
+        }
+        if (!boxes.isEmpty()) {
+            android.widget.TextView header = new android.widget.TextView(context);
+            header.setText(t("Recently visited"));
+            header.setPadding(0, (int) (12 * context.getResources().getDisplayMetrics().density), 0, 0);
+            views.add(header);
+            views.addAll(boxes);
+        }
+        Dialogs.show(context, "Your own list", "Communities to hide, one a line.",
+                views, () -> {
+                    StringBuilder text = new StringBuilder(editor.getText().toString().trim());
+                    for (android.widget.CheckBox box : boxes) {
+                        if (!box.isChecked()) continue;
+                        if (text.length() > 0) text.append('\n');
+                        text.append(box.getText());
+                    }
+                    putString(TOPIC_EXTRA, text.toString().trim());
                     preference.setSummary(topicExtraSummary());
                     run(changed);
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
+                }, null, null);
     }
 
     // endregion

@@ -30,6 +30,8 @@ final class PostInfo {
     final List<String> authors = new ArrayList<>();
     final List<String> communities = new ArrayList<>();
     final StringBuilder domain = new StringBuilder();
+    /** The post's media as host and ID (i.redd.it/abc, imgur.com/xyz), from the first media address it names. */
+    final StringBuilder media = new StringBuilder();
     boolean isPost;
     boolean nsfw;
     boolean photo;
@@ -59,7 +61,7 @@ final class PostInfo {
     @Override
     public String toString() {
         return "PostInfo{post=" + isPost + ", communities=" + communities + ", authors=" + authors
-                + ", title=" + clip(title) + ", body=" + clip(body) + ", flairs=" + flairs + ", domain=" + domain
+                + ", title=" + clip(title) + ", media=" + media + ", body=" + clip(body) + ", flairs=" + flairs + ", domain=" + domain
                 + ", nsfw=" + nsfw + ", photo=" + photo + ", video=" + video + ", link=" + link
                 + ", repost=" + repost + ", score=" + score + ", comments=" + comments + ", parts=" + partNames + "}";
     }
@@ -72,8 +74,12 @@ final class PostInfo {
     // region Feed elements
 
     private static final Pattern NEXT_LABEL = Pattern.compile(", [a-zA-Z]+=");
-    private static final Pattern FLAIR_TEXT = Pattern.compile("(?:\\(|, )(?:text|flairText|richText|name)=([^,()\\[\\]]+)");
+    private static final Pattern FLAIR_TEXT = Pattern.compile("(?:\\(|, )(?:text|flairText|richText|name)=");
     private static final Pattern NSFW = Pattern.compile("(?i)(?:\\(|, )(?:isNsfw|nsfw|over18|isOver18|isNSFW|nsfwIndicator)=true|\\bNsfw\\b|\\bNSFW\\b|Indicator\\.Nsfw|Nsfw\\(");
+    /** A media address: Reddit's image and video hosts, imgur, RedGIFs, Streamable, Gfycat, and YouTube. */
+    private static final Pattern MEDIA_URL = Pattern.compile(
+            "https?://(?:www\\.|m\\.)?((?:i|v|preview)\\.redd\\.it|(?:i\\.)?imgur\\.com|(?:www\\.)?redgifs\\.com/(?:watch|ifr)"
+                    + "|streamable\\.com|gfycat\\.com|youtu\\.be|youtube\\.com/(?:watch\\?v=|shorts/))/?(?!snoovatar|avatars?/|award)([A-Za-z0-9_-]{5,})");
     private static final Map<Class<?>, List<Field>> FIELDS = new ConcurrentHashMap<>();
 
     /**
@@ -111,6 +117,7 @@ final class PostInfo {
     static PostInfo fromElement(Object element) {
         PostInfo info = new PostInfo();
         info.read(element, 0, new IdentityHashMap<>());
+        info.outsideLink();
         return info;
     }
 
@@ -118,6 +125,7 @@ final class PostInfo {
         if (element == null || depth > 6 || seen.put(element, Boolean.TRUE) != null) return;
         String text = element.toString();
         String name = nameOf(text);
+        if (media.length() == 0) addMedia(text);
         if (name.equals("SearchPostInfo")) {
             readSearchPost(text);
         } else if (!name.endsWith("Element")) {
@@ -165,7 +173,7 @@ final class PostInfo {
                 break;
             }
             case "PostFlairsElement":
-                addFlairs(valueOf(text, "flairs"));
+                addFlairs(bracketed(text, "flairs"));
                 break;
             case "PostActionScoreBarElement":
             case "PostMetricElement":
@@ -283,12 +291,66 @@ final class PostInfo {
 
     private void addFlairs(String text) {
         Matcher matcher = FLAIR_TEXT.matcher(text);
-        while (matcher.find()) {
-            String flair = matcher.group(1).trim();
-            if (!flair.isEmpty() && !flair.equals("null") && !flairs.contains(flair.toLowerCase(Locale.ROOT))) {
-                flairs.add(flair.toLowerCase(Locale.ROOT));
+        while (matcher.find()) addFlair(fieldValue(text, matcher.end()));
+    }
+
+    private void addFlair(String text) {
+        if (text == null || text.trim().equals("null")) return;
+        String flair = Rules.flairKey(text);
+        if (!flair.isEmpty() && !flairs.contains(flair)) flairs.add(flair);
+    }
+
+    /**
+     * Whether the post has the flair given, compared by letters and digits alone (case, emoji, and punctuation
+     * aside).
+     */
+    boolean hasFlair(String flair) {
+        String key = Rules.flairMatchKey(flair);
+        if (key.isEmpty()) return false;
+        for (String own : flairs) if (key.equals(Rules.flairMatchKey(own))) return true;
+        return false;
+    }
+
+    /**
+     * A field's value in a data class's toString(), starting at {@code start}: it ends at the next ", name=" or at
+     * the closing bracket of its object, with brackets inside the value (a flair "Question (Answered)") kept.
+     */
+    static String fieldValue(String text, int start) {
+        int depth = 0;
+        for (int i = start; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '(' || c == '[' || c == '{') depth++;
+            else if (c == ')' || c == ']' || c == '}') {
+                if (depth == 0) return text.substring(start, i).trim();
+                depth--;
+            } else if (c == ',' && depth == 0 && NEXT_LABEL.matcher(text).region(i, text.length()).lookingAt()) {
+                return text.substring(start, i).trim();
             }
         }
+        return text.substring(start).trim();
+    }
+
+    /**
+     * A list or object field's whole value, brackets included ("flairs=[Flair(...), Flair(...)]"), or the plain
+     * value of any other field.
+     */
+    static String bracketed(String text, String label) {
+        String key = ", " + label + "=";
+        int start = text.indexOf(key);
+        if (start < 0) {
+            key = "(" + label + "=";
+            start = text.indexOf(key);
+            if (start < 0) return "";
+        }
+        start += key.length();
+        if (start >= text.length() || "([{".indexOf(text.charAt(start)) < 0) return valueOf(text, label);
+        int depth = 0;
+        for (int i = start; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '(' || c == '[' || c == '{') depth++;
+            else if ((c == ')' || c == ']' || c == '}') && --depth == 0) return text.substring(start, i + 1);
+        }
+        return text.substring(start);
     }
 
     // endregion
@@ -328,7 +390,22 @@ final class PostInfo {
     static PostInfo fromLink(Object link) {
         PostInfo info = new PostInfo();
         info.readLink(link, 0);
+        info.outsideLink();
         return info;
+    }
+
+    /**
+     * Gives a post with no photo, video, or link part the type its domain names: a post whose card shows only a link
+     * preview thumbnail (e.g., ballotpedia.org) names its site in the header, and a text post names self.community or
+     * nothing.
+     */
+    private void outsideLink() {
+        if (!textOnly() || domain.length() == 0) return;
+        String host = domain.toString().toLowerCase(Locale.ROOT);
+        if (host.startsWith("self.") || host.equals("reddit.com") || host.endsWith(".reddit.com")
+                || host.startsWith("r/") || host.startsWith("u/") || host.indexOf('.') < 0) return;
+        // A media host names the post's type (a YouTube video, an i.redd.it image); any other site is a link.
+        classicMedia(host, "");
     }
 
     private void readLink(Object link, int depth) {
@@ -339,10 +416,10 @@ final class PostInfo {
         addLine(body, string(link, "getTranslatedSelftext"));
         addCommunity(string(link, "getSubreddit"));
         addAuthor(string(link, "getAuthor"));
-        String flair = string(link, "getLinkFlairText").trim();
-        if (!flair.isEmpty()) flairs.add(flair.toLowerCase(Locale.ROOT));
+        addFlair(string(link, "getLinkFlairText"));
         if (Boolean.TRUE.equals(call(link, "getOver18"))) nsfw = true;
         if (domain.length() == 0) domain.append(string(link, "getDomain").toLowerCase(Locale.ROOT));
+        if (media.length() == 0) addMedia(string(link, "getUrl"));
 
         Object value = call(link, "getScore");
         if (value instanceof Number && score == null) score = ((Number) value).longValue();
@@ -369,6 +446,21 @@ final class PostInfo {
     }
 
     // endregion
+
+    /** Records the first media address in {@code text}, its host shortened to one name for each service. */
+    private void addMedia(String text) {
+        if (text == null || text.isEmpty()) return;
+        Matcher m = MEDIA_URL.matcher(text);
+        if (!m.find()) return;
+        String host = m.group(1).toLowerCase(Locale.ROOT);
+        if (host.endsWith("redd.it")) host = host.startsWith("v.") ? "v.redd.it" : "i.redd.it";
+        else if (host.contains("imgur")) host = "imgur";
+        else if (host.contains("youtu")) host = "youtube";
+        else if (host.contains("redgifs") || host.contains("gfycat")) host = "redgifs";
+        String id = m.group(2);
+        if (!host.equals("youtube")) id = id.toLowerCase(Locale.ROOT);
+        media.append(host).append('/').append(id);
+    }
 
     private void addCommunity(String name) {
         String community = Rules.community(name);

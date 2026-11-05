@@ -1,8 +1,9 @@
 # Reddit Keyword Filter for Morphe
 
-A Morphe patch bundle with one patch, **Hide keyword content**. It hides Reddit posts and comments by keyword,
+A Morphe patch bundle whose main patch, **Hide keyword content**, hides Reddit posts and comments by keyword,
 community, account, flair, post type, score, and number of comments. It can also hide the Inbox tab, sidebar rows,
-and the sidebar button's badge. Select it together with the official Morphe Patches source.
+and the sidebar button's badge. Three more patches select together with it (see Other patches). Select the bundle
+together with the official Morphe Patches source.
 
 [Add this source to Morphe](https://morphe.software/add-source?github=bryceaspringfield/morphe-reddit-keyword-filter),
 or add it by hand:
@@ -69,12 +70,22 @@ the subreddit's posts, or the account's posts and comments, in every feed.
 
 | Setting | Section | Effect |
 |---|---|---|
-| Hide Inbox button | Navigation bar | Removes the Inbox tab from the bottom bar (restart the app) |
+| Hide Inbox button | Navigation bar | Removes the Inbox tab from the bottom bar; Morphe offers a restart when you leave its settings |
 | Hide Popular, News, Latest, Discover communities, Start a community, and Custom feeds | Sidebar | A switch for each sidebar row |
 | Hide Recently Visited shelf | Sidebar | Only when Morphe Patches' own switch of that name is absent |
-| Hide sidebar button badge | Sidebar | Hides the orange dot on the sidebar (menu) button (restart the app) |
+| Hide sidebar button badge | Sidebar | Hides the orange dot on the sidebar (menu) button; Morphe offers a restart when you leave its settings |
 
 A section Morphe Patches leaves out (its patch not selected) is added with the same title.
+
+## Other patches
+
+Each patch below needs **Hide keyword content** selected too.
+
+| Patch | Default | Effect |
+|---|---|---|
+| Fix search media taps | On | Opens the tapped post from a search's Media tab; after an account is blocked there, Reddit opens the post next to it |
+| Morphe branding | Off | Adds switches in Settings > Morphe > Branding for Morphe's logo in place of the Snoo and Morphe's loading animation in place of Reddit's; its option Morphe launcher icon (on by default) sets Reddit's default launcher icon to Morphe's |
+| Say subreddits | Off | Renames communities to subreddits throughout Reddit's own text, in English and Spanish, and in this bundle's settings |
 
 ## Supported versions
 

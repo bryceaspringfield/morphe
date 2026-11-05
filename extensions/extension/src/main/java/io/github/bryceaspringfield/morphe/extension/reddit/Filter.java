@@ -52,12 +52,32 @@ final class Filter {
                 return PLACE_COMMUNITY;
             case "SEARCH":
                 return PLACE_SEARCH;
+            case "LATEST":
+                return PLACE_LATEST;
+            case "FOLLOWING":
+                return PLACE_FOLLOWING;
+            case "CUSTOM":
+                return PLACE_CUSTOM;
+            case "TOPIC":
+            case "CATEGORY":
+            case "ENTITY_CATEGORY":
+            case "INTERESTS":
+            case "COMMUNITIES":
+                return PLACE_EXPLORE;
+            case "GAMES":
+                return PLACE_GAMES;
+            case "MATURE":
+                return PLACE_MATURE;
             case "SUBMITTED_POSTS":
-            case "SAVED_POSTS":
-            case "HISTORY":
+                // Another account's profile; hidePost moves posts of the device's own accounts to PLACE_PROFILE_OWN.
                 return PLACE_PROFILE;
-            case "PDP":
+            case "SAVED_POSTS":
+                return PLACE_SAVED;
+            case "HISTORY":
+                return PLACE_HISTORY;
             case "FBP":
+                return PLACE_VIDEO_PLAYER;
+            case "PDP":
             case "ARTICLE":
             case "QUEUE":
             case "SAVED_COMMENTS":
@@ -72,7 +92,7 @@ final class Filter {
      * Whether any post filter is set, so a page with none skips reading its posts.
      */
     static boolean anyPostFilter() {
-        if (!postRules().isEmpty()) return true;
+        if (!postRules().isEmpty() || getBoolean(HIDE_DELETED) || getBoolean(HIDE_DUPLICATES)) return true;
         for (String key : TYPE_KEYS) if (!MODE_SHOW.equals(mode(key))) return true;
         if (bound(POST_SCORE_MIN) != null || bound(POST_SCORE_MAX) != null) return true;
         if (bound(POST_COMMENTS_MIN) != null || bound(POST_COMMENTS_MAX) != null) return true;
@@ -93,7 +113,11 @@ final class Filter {
      * The reason a post is hidden, or null to show it.
      */
     static String hidePost(PostInfo post, String place) {
+        if (PLACE_PROFILE.equals(place) && Accounts.ownsAny(post.authors)) place = PLACE_PROFILE_OWN;
         if (!post.isPost || place == null || !places().contains(place)) return null;
+        if (!post.authors.isEmpty() && DELETED_AUTHOR.equals(post.authors.get(0)) && getBoolean(HIDE_DELETED)) {
+            return "deleted account";
+        }
 
         Set<String> topics = getSet(TOPICS, Collections.emptySet());
         Set<String> extra = topicExtra();
@@ -115,10 +139,10 @@ final class Filter {
                         if (post.authors.contains(rule.value)) return "u/" + rule.value;
                         break;
                     case FLAIR:
-                        if (post.flairs.contains(rule.value)) return "flair " + rule.value;
+                        if (post.hasFlair(rule.value)) return "flair " + rule.value;
                         break;
                     case NOT_FLAIR:
-                        if (!post.flairs.contains(rule.value)) return "not flair " + rule.value;
+                        if (!post.hasFlair(rule.value)) return "not flair " + rule.value;
                         break;
                     default:
                         if ((fields.contains(FIELD_TITLE) && rule.matchesText(post.title.toString()))
@@ -152,6 +176,7 @@ final class Filter {
 
         if (outside(post.score, POST_SCORE_MIN, POST_SCORE_MAX)) return "score " + post.score;
         if (outside(post.comments, POST_COMMENTS_MIN, POST_COMMENTS_MAX)) return "comments " + post.comments;
+        if (getBoolean(HIDE_DUPLICATES)) return Duplicates.check(post);
         return null;
     }
 
@@ -193,7 +218,7 @@ final class Filter {
     }
 
     static boolean anyCommentFilter() {
-        return !commentRules().isEmpty() || bound(COMMENT_SCORE_MIN) != null || bound(COMMENT_SCORE_MAX) != null;
+        return !commentRules().isEmpty() || getBoolean(HIDE_DELETED) || bound(COMMENT_SCORE_MIN) != null || bound(COMMENT_SCORE_MAX) != null;
     }
 
     /**
@@ -203,6 +228,7 @@ final class Filter {
         String body = String.valueOf(call(comment, "getBody")).toLowerCase(Locale.ROOT);
         String author = String.valueOf(call(comment, "getAuthor")).toLowerCase(Locale.ROOT);
         String community = Rules.community(String.valueOf(call(comment, "getSubreddit")));
+        if (DELETED_AUTHOR.equals(author) && getBoolean(HIDE_DELETED)) return "deleted account";
 
         for (Rules.Rule rule : commentRules().rules) {
             if (!rule.inScope(Collections.singletonList(community), Collections.singletonList(author))) continue;
