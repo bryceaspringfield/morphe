@@ -91,8 +91,8 @@ private val brandingHooksPatch = bytecodePatch {
 @Suppress("unused")
 val morpheBrandingPatch = resourcePatch(
     name = "Morphe branding",
-    description = "Adds options to show the Morphe logo in place of Reddit's Snoo and Morphe's loading animation in " +
-            "place of Reddit's, and uses the Morphe launcher icon. Select it together with Hide keyword content.",
+    description = "Adds options, off until turned on, for the Morphe logo in place of Reddit's Snoo, Morphe's loading " +
+            "animation in place of Reddit's, and the Morphe launcher icon. Select it together with Hide keyword content.",
     default = false,
 ) {
     compatibleWith(COMPATIBILITY_REDDIT)
@@ -100,7 +100,7 @@ val morpheBrandingPatch = resourcePatch(
 
     val launcherIcon = booleanOption(
         key = "morpheLauncherIcon",
-        default = true,
+        default = false,
         title = "Morphe launcher icon",
         description = "Uses the Morphe icon for Reddit's default launcher icon. Morphe Patches' App icon patch " +
                 "still offers Reddit's other icons.",

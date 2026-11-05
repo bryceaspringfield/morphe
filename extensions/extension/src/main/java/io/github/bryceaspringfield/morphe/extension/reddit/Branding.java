@@ -1,7 +1,7 @@
 package io.github.bryceaspringfield.morphe.extension.reddit;
 
-import static io.github.bryceaspringfield.morphe.extension.reddit.FilterSettings.REDDIT_LOADER;
-import static io.github.bryceaspringfield.morphe.extension.reddit.FilterSettings.REDDIT_LOGO;
+import static io.github.bryceaspringfield.morphe.extension.reddit.FilterSettings.MORPHE_LOADER;
+import static io.github.bryceaspringfield.morphe.extension.reddit.FilterSettings.MORPHE_LOGO;
 import static io.github.bryceaspringfield.morphe.extension.reddit.FilterSettings.getBoolean;
 
 import android.annotation.SuppressLint;
@@ -9,7 +9,7 @@ import android.content.Context;
 
 /**
  * Morphe's logo and loading animation in place of Reddit's, when the Morphe branding patch added them to the app. Each
- * load of a Reddit loader or Snoo resource ID passes through here; a switch on keeps Reddit's.
+ * load of a Reddit loader or Snoo resource ID passes through here; Reddit's stays until its switch is turned on.
  */
 @SuppressWarnings("unused")
 public final class Branding {
@@ -22,14 +22,14 @@ public final class Branding {
 
     /** Injection point: the loading animation to show in place of Reddit's {@code id}. */
     public static int loader(int id) {
-        if (getBoolean(REDDIT_LOADER)) return id;
+        if (!getBoolean(MORPHE_LOADER)) return id;
         if (loaderId < 0) loaderId = resource("morphe_reddit_loader", "raw");
         return loaderId != 0 ? loaderId : id;
     }
 
     /** Injection point: the logo to show in place of Reddit's Snoo {@code id}. */
     public static int logo(int id) {
-        if (getBoolean(REDDIT_LOGO)) return id;
+        if (!getBoolean(MORPHE_LOGO)) return id;
         if (logoId < 0) logoId = resource("morphe_reddit_logo", "drawable");
         return logoId != 0 ? logoId : id;
     }

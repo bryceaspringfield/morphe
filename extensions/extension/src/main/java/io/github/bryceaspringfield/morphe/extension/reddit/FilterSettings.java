@@ -65,8 +65,8 @@ final class FilterSettings {
     /** The communities whose feeds were opened, newest first, one a line. */
     static final String RECENT_COMMUNITIES = "recent_communities";
     /** Keep Reddit's loading animation and Snoo, where the Morphe branding patch offers Morphe's. */
-    static final String REDDIT_LOADER = "reddit_loader";
-    static final String REDDIT_LOGO = "reddit_logo";
+    static final String MORPHE_LOADER = "morphe_loader";
+    static final String MORPHE_LOGO = "morphe_logo";
 
     // Where the post filters apply.
     static final String PLACES = "places";

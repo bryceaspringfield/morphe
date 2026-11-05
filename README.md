@@ -84,7 +84,7 @@ Each patch below needs **Hide keyword content** selected too.
 | Patch | Default | Effect |
 |---|---|---|
 | Fix search media taps | On | Opens the tapped post from a search's Media tab; after an account is blocked there, Reddit opens the post next to it |
-| Morphe branding | Off | Adds switches in Settings > Morphe > Branding for Morphe's logo in place of the Snoo and Morphe's loading animation in place of Reddit's; its option Morphe launcher icon (on by default) sets Reddit's default launcher icon to Morphe's |
+| Morphe branding | Off | Adds switches in Settings > Morphe > Branding, off until turned on, for Morphe's logo in place of the Snoo and Morphe's loading animation in place of Reddit's; its patch option Morphe launcher icon (off by default) sets Reddit's default launcher icon to Morphe's |
 | Say subreddits | Off | Renames communities to subreddits throughout Reddit's own text, in English and Spanish, and in this bundle's settings |
 
 ## Supported versions

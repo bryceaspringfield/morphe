@@ -191,12 +191,12 @@ final class SettingsUi {
         // Morphe's own search switches (the Ask button, the Trending shelves) move into a Search screen of their own.
         if (Branding.available()) {
             PreferenceCategory branding = newCategory(context, screen, "Branding");
-            toggle(context, branding, "Morphe loading animation", () -> !getBoolean(REDDIT_LOADER), on -> {
-                putBoolean(REDDIT_LOADER, !on);
+            toggle(context, branding, "Morphe loading animation", () -> getBoolean(MORPHE_LOADER), on -> {
+                putBoolean(MORPHE_LOADER, on);
                 restartNeeded();
             }).setSummary(t("Shows Morphe's animation in place of Reddit's while pages load."));
-            toggle(context, branding, "Morphe logo", () -> !getBoolean(REDDIT_LOGO), on -> {
-                putBoolean(REDDIT_LOGO, !on);
+            toggle(context, branding, "Morphe logo", () -> getBoolean(MORPHE_LOGO), on -> {
+                putBoolean(MORPHE_LOGO, on);
                 restartNeeded();
             }).setSummary(t("Shows the Morphe logo in place of Reddit's Snoo, as in the search bar."));
         }
