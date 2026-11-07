@@ -109,8 +109,11 @@ public final class XFilter extends Filter {
                 VideoInformation.getChannelName());
         if (rules.isEmpty()) return false;
         VideoItem comment = VideoItem.parse(buffer, path);
+        // Handles are dropped (a comment's buffer names the channel, e.g., "by @RickAstleyYT" under a creator heart),
+        // and so are the buffer's own labels after the comment text.
+        String text = comment.text.replaceAll("@[\\w.\\-]+", " ");
         for (ChannelRules.Rule r : rules) {
-            if (r.keyword != null && ChannelRules.containsKeyword(comment.text, r.keyword, r.wholeWord)) {
+            if (r.keyword != null && ChannelRules.containsKeyword(text, r.keyword, r.wholeWord)) {
                 Logger.printDebug(() -> "YouTube Extras: comment hidden by " + r.channel.label() + " " + r.keyword);
                 return true;
             }
