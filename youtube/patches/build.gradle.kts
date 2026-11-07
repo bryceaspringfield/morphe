@@ -4,10 +4,10 @@ patches {
     about {
         name = "YouTube Extras"
         description = "Channel-scoped filters, video length and category filters, auto feedback, and fixes for YouTube. Select it together with Morphe Patches."
-        source = "https://github.com/bryceaspringfield/morphe-youtube-extras"
+        source = "https://github.com/bryceaspringfield/morphe/tree/main/youtube"
         author = "bryceaspringfield"
-        contact = "https://github.com/bryceaspringfield/morphe-youtube-extras/issues"
-        website = "https://morphe.software/add-source?github=bryceaspringfield/morphe-youtube-extras"
+        contact = "https://github.com/bryceaspringfield/morphe/issues"
+        website = "https://github.com/bryceaspringfield/morphe/tree/main/youtube"
         license = "GPLv3"
     }
 }
