@@ -35,11 +35,17 @@ public final class XFilter extends Filter {
 
     private final StringFilterGroup comments = new StringFilterGroup(null, "comment_thread.e");
 
+    /** The red progress bar of a watched video's thumbnail (a brand gradient under the lockup's thumbnail). */
+    private final StringFilterGroup progressBar = new StringFilterGroup(null, "brand_linear_gradient_container.e");
+
+    /** The last top-level item laid out on this thread; Litho lays out an item's children after it, on its thread. */
+    private static final ThreadLocal<VideoItem> LAST_ITEM = new ThreadLocal<>();
+
     private enum Place {HOME, SUBSCRIPTIONS, SEARCH, RELATED, OTHER}
 
     public XFilter() {
         XSettings.load();
-        addPathCallbacks(feedItems, comments);
+        addPathCallbacks(feedItems, comments, progressBar);
     }
 
     @Override
@@ -47,6 +53,16 @@ public final class XFilter extends Filter {
                               CharSequence path, byte[] buffer, BufferAsciiStrings asciiStrings,
                               StringFilterGroup matchedGroup, FilterContentType contentType, int contentIndex) {
         // Only the item's own top-level component, whose buffer holds the whole item.
+        if (matchedGroup == progressBar) {
+            String p = path.toString();
+            if (p.contains("thumbnail") && !p.contains("live_ring") && !p.contains("avatar")) {
+                VideoItem parent = LAST_ITEM.get();
+                if (XSettings.DEBUG.get()) Logger.printDebug(() -> "YouTube Extras: progress bar " + p + " parent " + parent);
+                if (parent != null && parent.videoId != null && p.contains(parent.root)) Feedback.onWatched(parent);
+            }
+            return false;
+        }
+        WatchHistory.sample();
         if (matchedGroup == comments) {
             return isTopLevel(path.subSequence(contentIndex, path.length())) && filterComment(buffer, path);
         }
@@ -56,6 +72,7 @@ public final class XFilter extends Filter {
         if (!applies(place)) return false;
         VideoItem item = VideoItem.parse(buffer, path);
         Channels.learn(item);
+        LAST_ITEM.set(item);
         String reason = reason(item, place);
         if (XSettings.DEBUG.get()) {
             Logger.printDebug(() -> "YouTube Extras: " + place + " " + item + (reason == null ? "" : " HIDDEN by " + reason));

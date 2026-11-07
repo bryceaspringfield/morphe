@@ -22,6 +22,8 @@ private const val MORPHE_LITHO_FILTER = "Lapp/morphe/extension/shared/patches/co
 private const val MORPHE_SETTINGS_FRAGMENT =
     "Lapp/morphe/extension/youtube/settings/preference/YouTubePreferenceFragment;"
 
+private const val MORPHE_VIDEO_INFORMATION = "Lapp/morphe/extension/youtube/patches/VideoInformation;"
+
 private val logger = Logger.getLogger("YouTubeExtras")
 
 /**
@@ -58,6 +60,12 @@ internal val youtubeExtrasBasePatch = bytecodePatch {
                 )
             }
         }
+
+        // Each new video reaches the auto like (and, with Log feed items on, the response dumps).
+        mutableClassDefByOrNull(MORPHE_VIDEO_INFORMATION)?.methods?.firstOrNull {
+            it.name == "setVideoId" && it.parameterTypes.map { p -> p.toString() } == listOf("Ljava/lang/String;")
+        }?.addInstruction(0, "invoke-static { p0 }, $EXTENSION/AutoLike;->onVideo(Ljava/lang/String;)V")
+            ?: logger.warning("Morphe's VideoInformation.setVideoId is missing, so Like every video is off.")
 
         val initialize = mutableClassDefByOrNull(MORPHE_SETTINGS_FRAGMENT)?.methods?.firstOrNull {
             it.name == "initialize" && it.parameterTypes.isEmpty() && it.returnType == "V"

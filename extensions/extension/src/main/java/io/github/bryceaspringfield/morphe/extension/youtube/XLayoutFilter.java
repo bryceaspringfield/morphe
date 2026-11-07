@@ -14,15 +14,18 @@ import app.morphe.extension.shared.patches.components.StringFilterGroup;
 @SuppressWarnings("unused")
 public final class XLayoutFilter extends Filter {
 
-    /** Each channel of the subscribed channels bar; the dot is a child component without text. */
-    private final StringFilterGroup channelBarChannel = new StringFilterGroup(null, "subscriptions_channel_bar_channel.e");
+    /**
+     * The dot on a channel's avatar in the subscribed channels bar ("subscriptions_channel_bar_channel.eml|...|
+     * decorated_avatar.eml|...|status_dot.eml", YouTube 21.44).
+     */
+    private final StringFilterGroup statusDot = new StringFilterGroup(null, "status_dot.e");
 
     /** The comments panel's community entry ("Community of CHANNEL ... Visit"). */
     private final StringFilterGroup commentsCommunity = new StringFilterGroup(null,
             "community_entry_point", "comments_community", "community_header", "channel_community");
 
     public XLayoutFilter() {
-        addPathCallbacks(channelBarChannel, commentsCommunity);
+        addPathCallbacks(statusDot, commentsCommunity);
     }
 
     @Override
@@ -33,7 +36,9 @@ public final class XLayoutFilter extends Filter {
             Logger.printDebug(() -> "YouTube Extras layout: " + path + " id=" + identifier + " a11y=" + accessibility);
         }
         if (matchedGroup == commentsCommunity) return XSettings.HIDE_COMMENTS_COMMUNITY.get();
-        // The dot's component is not yet identified (it needs a signed-in account), so the bar is only logged.
+        if (matchedGroup == statusDot) {
+            return XSettings.HIDE_CHANNEL_BAR_DOTS.get() && path.toString().contains("subscriptions_channel_bar");
+        }
         return false;
     }
 

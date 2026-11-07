@@ -20,17 +20,22 @@ final class VideoItem {
     private static final Pattern HANDLE = Pattern.compile("/@([\\w.\\-]{3,30}?)(?=[^\\w.\\-]|.?https?://|$)");
     /** The live badge's icon: yt_outline_radar_live_black_24 (Nov 6, 2026 early), yt_outline_experimental_live_black_24 (later). */
     private static final Pattern LIVE_ICON = Pattern.compile("yt_(?:outline|fill)_[a-z_]*?live_(?:black|white)_\\d+");
+    private static final Pattern FEEDBACK_TOKEN = Pattern.compile("AB9zfp[A-Za-z0-9_-]{60,}");
     private static final Pattern DURATION = Pattern.compile("(?<![\\d:])(?:(\\d{1,2}):)?(\\d{1,2}):(\\d{2})(?![\\d:])");
     /** "Go to channel X" in the languages the bundle knows; the buffer states the channel name only this way. */
     private static final String[] GO_TO_CHANNEL = {"Go to channel ", "Ir al canal ", "Aller sur la chaîne ",
             "Zum Kanal ", "Vai al canale ", "Ir para o canal "};
 
     final String videoId;
+    /** The first feedback token of the buffer: the Not interested item's (signed in only). */
+    final String feedbackToken;
     final String channelId;
     final String handle;
     final String channelName;
     /** Length in seconds, or -1 where the item states none (live streams, playlists, posts). */
     final int seconds;
+    /** The item's first path component with its hash ("video_lockup_with_attachment.eml-fe|c2082e29bf1de8b8"). */
+    final String root;
     final boolean live;
     final boolean playlist;
     final boolean mix;
@@ -41,14 +46,16 @@ final class VideoItem {
      */
     final String text;
 
-    private VideoItem(String videoId, String channelId, String handle,
-                      String channelName, int seconds, boolean live, boolean playlist, boolean mix,
+    private VideoItem(String videoId, String feedbackToken, String channelId, String handle,
+                      String channelName, int seconds, String root, boolean live, boolean playlist, boolean mix,
                       boolean shorts, String text) {
         this.videoId = videoId;
+        this.feedbackToken = feedbackToken;
         this.channelId = channelId;
         this.handle = handle;
         this.channelName = channelName;
         this.seconds = seconds;
+        this.root = root;
         this.live = live;
         this.playlist = playlist;
         this.mix = mix;
@@ -96,7 +103,16 @@ final class VideoItem {
         boolean playlist = text.contains("youtube.com/playlist?list=PL") && !text.contains("youtube.com/watch?v=");
         boolean mix = !playlist && text.contains("youtube.com/playlist?list=RD") && !text.contains("youtube.com/watch?v=");
         if (live || playlist || mix) seconds = -1;
-        return new VideoItem(videoId, channelId, handle, name, seconds, live, playlist, mix, shorts,
+        Matcher fm = FEEDBACK_TOKEN.matcher(text);
+        String token = null;
+        if (fm.find()) {
+            token = fm.group();
+            // A token is base64 of whole bytes (a multiple of 4 characters); a length byte read as a letter may follow it.
+            token = token.substring(0, token.length() - token.length() % 4);
+        }
+        String[] parts = p.split("\\|");
+        String root = parts.length > 1 ? parts[0] + "|" + parts[1] : p;
+        return new VideoItem(videoId, token, channelId, handle, name, seconds, root, live, playlist, mix, shorts,
                 withoutQuery(readable(text), text));
     }
 
