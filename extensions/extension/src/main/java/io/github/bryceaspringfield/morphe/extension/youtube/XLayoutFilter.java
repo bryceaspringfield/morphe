@@ -20,9 +20,11 @@ public final class XLayoutFilter extends Filter {
      */
     private final StringFilterGroup statusDot = new StringFilterGroup(null, "status_dot.e");
 
-    /** The comments panel's community entry ("Community of CHANNEL ... Visit"). */
-    private final StringFilterGroup commentsCommunity = new StringFilterGroup(null,
-            "community_entry_point", "comments_community", "community_header", "channel_community");
+    /**
+     * The community card of the watch page's comments carousel ("CHANNEL's Community ... Visit", reached by swiping
+     * the comments teaser): a cell of video_metadata_carousel whose buffer opens FEcommunity_page.
+     */
+    private final StringFilterGroup commentsCommunity = new StringFilterGroup(null, "video_metadata_carousel.e");
 
     public XLayoutFilter() {
         addPathCallbacks(statusDot, commentsCommunity);
@@ -32,10 +34,10 @@ public final class XLayoutFilter extends Filter {
     public boolean isFiltered(ContextInterface contextInterface, String identifier, String accessibility,
                               CharSequence path, byte[] buffer, BufferAsciiStrings asciiStrings,
                               StringFilterGroup matchedGroup, FilterContentType contentType, int contentIndex) {
-        if (XSettings.DEBUG.get()) {
-            Logger.printDebug(() -> "YouTube Extras layout: " + path + " id=" + identifier + " a11y=" + accessibility);
+        if (matchedGroup == commentsCommunity) {
+            return XSettings.HIDE_COMMENTS_COMMUNITY.get() && path.toString().endsWith("|CollectionType|CellType|")
+                    && new String(buffer, java.nio.charset.StandardCharsets.ISO_8859_1).contains("FEcommunity_page");
         }
-        if (matchedGroup == commentsCommunity) return XSettings.HIDE_COMMENTS_COMMUNITY.get();
         if (matchedGroup == statusDot) {
             return XSettings.HIDE_CHANNEL_BAR_DOTS.get() && path.toString().contains("subscriptions_channel_bar");
         }

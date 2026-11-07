@@ -46,6 +46,8 @@ public final class XFilter extends Filter {
     public XFilter() {
         XSettings.load();
         addPathCallbacks(feedItems, comments, progressBar);
+        SaveChooser.register();
+        NetworkRecovery.register();
     }
 
     @Override
