@@ -1,21 +1,22 @@
 # Reddit Keyword Filter for Morphe
 
 A Morphe patch bundle whose main patch, **Hide keyword content**, hides Reddit posts and comments by keyword,
-community, account, flair, post type, score, and number of comments. It can also hide the Inbox tab, sidebar rows,
-and the sidebar button's badge. Three more patches select together with it (see Other patches). Select the bundle
-together with the official Morphe Patches source.
+community, account, flair, post type, score, and number of comments. Five more patches add the Inbox, bar, and
+sidebar switches, media options, Morphe branding, the word subreddits, and a fix for search's Media tab (see Other
+patches). Every patch is selected by default, and each feature is a switch in Settings > Morphe, off until turned on.
+Select the bundle together with the official Morphe Patches source.
 
-[Add this source to Morphe](https://morphe.software/add-source?github=bryceaspringfield/morphe-reddit-keyword-filter),
-or add it by hand:
+The bundle also holds YouTube Extras ([youtube/](../youtube/)).
+[Add this source to Morphe](https://morphe.software/add-source?github=bryceaspringfield/morphe), or add it by hand:
 
 ```text
-https://github.com/bryceaspringfield/morphe-reddit-keyword-filter
+https://github.com/bryceaspringfield/morphe
 ```
 
 ## Use
 
 1. In Morphe, keep the Morphe Patches source and add this one.
-2. Patch Reddit with Morphe Patches' Reddit patches and **Hide keyword content** selected together.
+2. Patch Reddit with Morphe Patches' Reddit patches and this bundle's patches selected together.
 3. In the patched app, open Settings > Morphe (in General, under Account settings). The filters are in the section
    Keyword filter, after Ads; the switches for the bottom bar and the sidebar join Morphe's own Navigation bar and
    Sidebar sections.
@@ -32,9 +33,13 @@ Settings apply as soon as they are saved. Every filter shows everything until it
 | Show only these post types | The types to show alone, every other post hidden; with two types chosen, a post of either type is shown |
 | Score (upvotes) | A lower bound, an upper bound, or both; posts outside the range are hidden |
 | Number of comments | The same, for the number of comments |
-| Hide communities by topic | A screen of checkboxes, one a built-in list (Zionism; Fascism, Nazism, and white supremacy; Incels), and your own list of communities to hide |
+| Hide communities by topic | A screen of checkboxes, one a built-in list (Zionism; Fascism, Nazism, and white supremacy; Incels; Circlejerk (-jerk) subreddits), and your own list of communities to hide |
 | Subreddit filters | Every subreddit with filters of its own, and Add a subreddit (below) |
 | Profile filters | Every account with filters of its own, and Add a profile (below) |
+| Hide duplicate posts | Hides a post with the same title, text, or media as one already shown since Reddit started |
+| Hide deleted accounts | Hides posts and comments by deleted accounts |
+| Hide accounts flagged as bots | Hides posts and comments by accounts which [Bot Bouncer](https://github.com/fsvreddit/bot-bouncer), a Reddit moderation bot, has banned as bots or karma farmers; the app downloads the list once a day from this repository's `karma-farmers` release, rebuilt daily from r/BotBouncer's posts |
+| Hide likely karma farmers | Hides posts and comments by accounts with a name Reddit generates (two words and a number, e.g., Jolly-Fox-1234) which repost a post, or copy a comment, already shown since Reddit started; a guess, since some such accounts are people |
 | Where post filters apply | Home, Popular, News, community pages, search results, profiles, and other feeds (custom feeds and Latest) |
 | Comment keywords to hide | Rules for comment text and authors (the same forms as for posts); replies under a hidden comment are hidden too |
 | Comment score (upvotes) | A lower bound, an upper bound, or both |
@@ -43,6 +48,8 @@ Settings apply as soon as they are saved. Every filter shows everything until it
 |---|---|
 | `r/name` | in the community `name` |
 | `u/name` | by the account `name` |
+| `mention:r/name` | whose title or text names r/name (also /r/name and reddit.com/r/name links), wherever it is posted; in comment rules, comments naming it |
+| `mention:u/name` | whose title or text names u/name (also reddit.com/user/name links); in comment rules, comments naming it |
 | `flair:Meme` | with the flair Meme |
 | `!flair:Meme` | without the flair Meme |
 | `"phrase"` | containing the phrase as whole words |
@@ -79,18 +86,31 @@ A section Morphe Patches leaves out (its patch not selected) is added with the s
 
 ## Other patches
 
-Each patch below needs **Hide keyword content** selected too.
+Each patch below works with or without the others, and is selected by default. Its switches in Settings > Morphe are
+off until turned on; Fix search media taps has no switch.
 
-| Patch | Default | Effect |
+| Patch | Settings > Morphe | Effect |
 |---|---|---|
-| Fix search media taps | On | Opens the tapped post from a search's Media tab; after an account is blocked there, Reddit opens the post next to it |
-| Morphe branding | Off | Adds switches in Settings > Morphe > Branding, off until turned on, for Morphe's logo in place of the Snoo and Morphe's loading animation in place of Reddit's; its patch option Morphe launcher icon (off by default) sets Reddit's default launcher icon to Morphe's |
-| Say subreddits | Off | Renames communities to subreddits throughout Reddit's own text, in English and Spanish, and in this bundle's settings |
+| Navigation and sidebar | Navigation bar and Sidebar (table above) | The Inbox button, the bars, the sidebar rows, and the sidebar button's badge |
+| Media options | Media: Play media links inside Reddit, Hide the content caution, and Captions on by default | Image and video links (e.g., imgur, Streamable, and Giphy) played in Reddit; media Reddit marks with a caution shown without the blur; captions on at each start |
+| Fix search media taps | No switch | Opens the tapped post from a search's Media tab; after an account is blocked there, Reddit opens the post next to it |
+| Morphe branding | Layout: Morphe loading animation, Morphe logo, and Morphe launcher icon | Morphe's loading animation in place of Reddit's, Morphe's logo in place of the Snoo, and the Morphe icon on the home screen in place of the icon in use |
+| Say subreddits | Wording: Say subreddits | Renames communities to subreddits throughout Reddit's own text, in English and Spanish, and in this bundle's settings |
+
+With Morphe Patches' Hide Trending shelves patch selected, its switch splits in two: Hide Trending in search (Search)
+and Hide Trending in feeds (Layout).
+
+### Profiles
+
+Profiles, on Settings > Morphe, are named copies of every setting, this bundle's and Morphe's own. A tap on a profile
+uses it, and its three-dot menu uses, renames, assigns to an account, or deletes it. New profile copies the settings
+in use. A profile assigned to an account is used whenever Reddit switches to that account; Morphe's own settings
+apply after Reddit restarts.
 
 ## Supported versions
 
-The same Reddit versions as Morphe Patches: 2026.10.0, 2026.24.0, and 2026.40.0, with 2026.42.0, 2026.43.0, and
-2026.44.0 experimental. Tested on 2026.44.0 with Morphe Patches 2.1.0-dev.7.
+The same Reddit versions as Morphe Patches: 2026.10.0, 2026.24.0, and 2026.40.0, with 2026.43.0, 2026.44.0, and
+2026.45.0 experimental. Tested on 2026.45.0 (build 2645071) and 2026.44.0 with Morphe Patches 2.1.0.
 
 ## License
 

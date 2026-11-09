@@ -1,13 +1,13 @@
 # YouTube Extras for Morphe
 
-A Morphe patch bundle for YouTube, used together with the official Morphe Patches (v2.1.0-dev.12 and later, YouTube
+A Morphe patch bundle for YouTube, used together with the official Morphe Patches (v2.1.0 and later, YouTube
 21.44.528). It adds one patch, **YouTube Extras**, whose settings are in Settings > Morphe > YouTube Extras. Every
 option is off, or empty, until it is set.
 
-Add this source in Morphe by URL:
+The bundle also holds the Reddit Keyword Filter ([reddit/](../reddit/)). Add this source in Morphe by URL:
 
 ```text
-https://github.com/bryceaspringfield/morphe/youtube
+https://github.com/bryceaspringfield/morphe
 ```
 
 ## Filters

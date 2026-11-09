@@ -1,12 +1,25 @@
-# Morphe patch bundles
+# Morphe patches by bryceaspringfield
 
-Patch bundles for [Morphe](https://morphe.software), one folder an app. Each bundle adds to the official Morphe
+One patch bundle for [Morphe](https://morphe.software), with patches for two apps. It adds to the official Morphe
 Patches: select it together with Morphe Patches when patching.
 
-| App | Folder | Add this source in Morphe |
-|---|---|---|
-| Reddit | [reddit/](reddit/) (Reddit Keyword Filter) | `https://github.com/bryceaspringfield/morphe/reddit` |
-| YouTube | [youtube/](youtube/) (YouTube Extras) | `https://github.com/bryceaspringfield/morphe/youtube` |
+[Add this source to Morphe](https://morphe.software/add-source?github=bryceaspringfield/morphe), or add it by URL in
+Morphe's Sources:
 
-In Morphe, open Sources, add a source by URL, and paste the address of the app's bundle. Each folder's
-`patches-bundle.json` names its newest release, tagged `<app>-v<version>` on this repository's Releases page.
+```text
+https://github.com/bryceaspringfield/morphe
+```
+
+| App | Patches | Supported versions | Details |
+|---|---|---|---|
+| Reddit | Hide keyword content, Navigation and sidebar, Media options, Morphe branding, Say subreddits, and Fix search media taps (Reddit Keyword Filter) | 2026.10.0, 2026.24.0, and 2026.40.0, with 2026.43.0, 2026.44.0, and 2026.45.0 experimental | [reddit/](reddit/) |
+| YouTube | YouTube Extras | 20.26.46, 20.51.39, 21.23.492, 21.28.208, 21.30.216, 21.43.523, and 21.44.528, the versions Morphe Patches supports | [youtube/](youtube/) |
+
+`patches-bundle.json` names the newest release, tagged `v<version>` on this repository's Releases page. The earlier
+addresses `https://github.com/bryceaspringfield/morphe/reddit` and `https://github.com/bryceaspringfield/morphe/youtube` name the same bundle; replace both with the one address above, since
+two sources naming one bundle list every patch twice.
+
+## Build
+
+`./gradlew :patches:buildAndroid` writes the bundle to `patches/build/libs/`. The patches are in `patches/`, and each
+app's extension (the code the patches add to the app) in `extensions/reddit/` and `extensions/youtube/`.
