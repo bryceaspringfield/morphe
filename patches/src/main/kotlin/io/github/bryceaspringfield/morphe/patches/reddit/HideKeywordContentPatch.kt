@@ -162,6 +162,7 @@ internal val keywordFilterSettingsPatch = bytecodePatch {
         }
 
         moveMorpheRow()
+        addAboutSection()
 
         initialize.apply {
             // From the last return to the first, so earlier indices stay valid.
@@ -661,6 +662,36 @@ val mediaOptionsPatch = bytecodePatch(
  * General). The row's class sets its section, order, and key in its constructor; each return of the constructor
  * gets a check of the key, since the class also builds the user agreement row.
  */
+/** Morphe Patches' About dialog, whose page gets this bundle's section (author and source code). */
+private const val MORPHE_ABOUT_PREFERENCE =
+    "Lapp/morphe/extension/shared/settings/preference/about/MorpheAboutPreference;"
+
+private fun app.morphe.patcher.patch.BytecodePatchContext.addAboutSection() {
+    val method = mutableClassDefByOrNull(MORPHE_ABOUT_PREFERENCE)?.methods?.firstOrNull {
+        it.name == "createDialogHtml" && it.returnType == "Ljava/lang/String;"
+    }
+    if (method == null) {
+        Logger.getLogger("HideKeywordContentPatch").warning("Morphe's About dialog is missing; its credit section is left out.")
+        return
+    }
+    method.apply {
+        instructions.withIndex()
+            .filter { it.value.opcode == Opcode.RETURN_OBJECT }
+            .map { it.index }
+            .reversed()
+            .forEach { index ->
+                val register = getInstruction<OneRegisterInstruction>(index).registerA
+                addInstructions(
+                    index,
+                    """
+                        invoke-static { v$register }, $EXTENSION_CLASS->aboutHtml(Ljava/lang/String;)Ljava/lang/String;
+                        move-result-object v$register
+                    """
+                )
+            }
+    }
+}
+
 private fun app.morphe.patcher.patch.BytecodePatchContext.moveMorpheRow() {
     val found = mutableListOf<com.android.tools.smali.dexlib2.iface.ClassDef>()
     classDefForEach { classDef ->

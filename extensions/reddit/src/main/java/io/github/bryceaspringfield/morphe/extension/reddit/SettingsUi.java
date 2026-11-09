@@ -387,13 +387,12 @@ final class SettingsUi {
 
     // endregion
 
-    /** The author's page on GitHub Pages, the last row of the Other screen. */
+    /** The author's page on GitHub Pages, linked from Morphe's About dialog. */
     private static final String AUTHOR_URL = "https://bryceaspringfield.github.io";
+    /** This bundle's repository, linked from Morphe's About dialog. */
+    private static final String SOURCE_URL = "https://github.com/bryceaspringfield/morphe";
 
-    /**
-     * Moves Morphe's Other category (Miscellaneous in English) below every other category, and ends it with a row
-     * opening the author's GitHub page.
-     */
+    /** Moves Morphe's Other category (Miscellaneous in English) below every other category. */
     private static void addOtherLast(Context context, PreferenceScreen screen) {
         PreferenceCategory other = categoryTitled(context, screen, "morphe_screen_miscellaneous_title");
         if (other == null) other = categoryHolding(screen, "morphe_sanitize_sharing_links");
@@ -408,22 +407,55 @@ final class SettingsUi {
             if (child != other) last = Math.max(last, child.getOrder());
         }
         other.setOrder(last + 1);
-        Preference author = new Preference(context);
-        wrapTitle(author);
-        author.setTitle(t("Made by Bryce Springfield"));
-        author.setSummary("bryceaspringfield.github.io");
-        author.setPersistent(false);
-        author.setOrder(Integer.MAX_VALUE - 1);
-        author.setOnPreferenceClickListener(p -> {
-            try {
-                context.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(AUTHOR_URL))
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-            } catch (Exception ex) {
-                Log.e(TAG, "Could not open " + AUTHOR_URL, ex);
-            }
-            return true;
-        });
-        other.addPreference(author);
+    }
+
+    /**
+     * Adds this bundle's section (its author's page and its source code) to the end of Morphe's About dialog, in the
+     * dialog's own markup: the icon and chevron of each row are copied from the dialog's links, so the section follows
+     * its style. Returns the page unchanged when its end is missing or the section is already there.
+     */
+    static String aboutHtml(String html) {
+        try {
+            int end = html.lastIndexOf("</body>");
+            if (end < 0 || html.contains(AUTHOR_URL)) return html;
+            String chevron = span(html, "<span class=\"item-chevron\">", 0);
+            String section = "<div class=\"section\"><div class=\"section-title\">Reddit Keyword Filter</div>"
+                    + "<div class=\"settings-group\">"
+                    + aboutRow(AUTHOR_URL, t("Made by Bryce Springfield"), icon(html, "https://"), chevron)
+                    + aboutRow(SOURCE_URL, "GitHub", icon(html, "https://github.com"), chevron)
+                    + "</div></div>";
+            return html.substring(0, end) + section + html.substring(end);
+        } catch (Exception ex) {
+            Log.e(TAG, "aboutHtml failure", ex);
+            return html;
+        }
+    }
+
+    private static String aboutRow(String url, String title, String icon, String chevron) {
+        return "<a href=\"" + url + "\" class=\"settings-item\"><span class=\"item-icon\">" + icon + "</span>"
+                + "<div class=\"item-text\"><div class=\"item-title\">" + title.replace("&", "&amp;").replace("<", "&lt;")
+                + "</div></div>" + chevron + "</a>";
+    }
+
+    /** The inner icon of the dialog's first link whose address starts with the prefix, else of its first link. */
+    private static String icon(String html, String hrefPrefix) {
+        int at = html.indexOf("<a href=\"" + hrefPrefix);
+        if (at < 0) at = html.indexOf("<a href=\"");
+        return at < 0 ? "" : inner(html, "<span class=\"item-icon\">", at);
+    }
+
+    /** The whole span starting with the open tag, from the index on; empty when absent. */
+    private static String span(String html, String open, int from) {
+        int start = html.indexOf(open, from);
+        int close = start < 0 ? -1 : html.indexOf("</span>", start);
+        return close < 0 ? "" : html.substring(start, close + "</span>".length());
+    }
+
+    /** The content of the span starting with the open tag, from the index on; empty when absent. */
+    private static String inner(String html, String open, int from) {
+        int start = html.indexOf(open, from);
+        int close = start < 0 ? -1 : html.indexOf("</span>", start);
+        return close < 0 ? "" : html.substring(start + open.length(), close);
     }
 
     // region Profiles

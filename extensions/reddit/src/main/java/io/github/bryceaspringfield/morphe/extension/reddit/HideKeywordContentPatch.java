@@ -397,7 +397,9 @@ public final class HideKeywordContentPatch {
      */
     public static List<?> filterLinks(List<?> list) {
         try {
-            if (list == null || list.isEmpty() || !Filter.anyPostFilter()) return list;
+            // A listing of one post is the post being opened (its page, its menu, or the full post Reddit fetches
+            // for a feed card), never a page of results: emptied, it shows Reddit's error screen, so it stays.
+            if (list == null || list.size() <= 1 || !Filter.anyPostFilter()) return list;
             boolean debug = getBoolean(DEBUG);
             List<Object> filtered = new ArrayList<>(list.size());
             for (Object item : list) {
@@ -623,6 +625,13 @@ public final class HideKeywordContentPatch {
      */
     public static void setSettingsFragment(Object fragment) {
         settingsFragment = new WeakReference<>(fragment);
+    }
+
+    /**
+     * Injection point. Returns Morphe's About dialog page with this bundle's section (author and source) at its end.
+     */
+    public static String aboutHtml(String html) {
+        return SettingsUi.aboutHtml(html);
     }
 
     /**
