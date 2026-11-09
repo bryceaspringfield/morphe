@@ -1,5 +1,6 @@
 package io.github.bryceaspringfield.morphe.patches.reddit
 
+import io.github.bryceaspringfield.morphe.patches.hookReturns
 import app.morphe.patcher.extensions.InstructionExtensions.addInstruction
 import app.morphe.patcher.extensions.InstructionExtensions.addInstructions
 import app.morphe.patcher.extensions.InstructionExtensions.addInstructionsWithLabels
@@ -165,14 +166,7 @@ internal val keywordFilterSettingsPatch = bytecodePatch {
         addAboutSection()
 
         initialize.apply {
-            // From the last return to the first, so earlier indices stay valid.
-            instructions.withIndex()
-                .filter { it.value.opcode == Opcode.RETURN_VOID }
-                .map { it.index }
-                .reversed()
-                .forEach { index ->
-                    addInstruction(index, "invoke-static { }, $EXTENSION_CLASS->addSettings()V")
-                }
+            hookReturns(Opcode.RETURN_VOID, "invoke-static { }, $EXTENSION_CLASS->addSettings()V")
 
             // The screen is saved at the start, since the compiled method reuses the register of
             // `this` for its own values before it returns.
@@ -674,22 +668,13 @@ private fun app.morphe.patcher.patch.BytecodePatchContext.addAboutSection() {
         Logger.getLogger("HideKeywordContentPatch").warning("Morphe's About dialog is missing; its credit section is left out.")
         return
     }
-    method.apply {
-        instructions.withIndex()
-            .filter { it.value.opcode == Opcode.RETURN_OBJECT }
-            .map { it.index }
-            .reversed()
-            .forEach { index ->
-                val register = getInstruction<OneRegisterInstruction>(index).registerA
-                addInstructions(
-                    index,
-                    """
-                        invoke-static { v$register }, $EXTENSION_CLASS->aboutHtml(Ljava/lang/String;)Ljava/lang/String;
-                        move-result-object v$register
-                    """
-                )
-            }
-    }
+    method.hookReturns(
+        Opcode.RETURN_OBJECT,
+        """
+            invoke-static { {reg} }, $EXTENSION_CLASS->aboutHtml(Ljava/lang/String;)Ljava/lang/String;
+            move-result-object {reg}
+        """
+    )
 }
 
 private fun app.morphe.patcher.patch.BytecodePatchContext.moveMorpheRow() {

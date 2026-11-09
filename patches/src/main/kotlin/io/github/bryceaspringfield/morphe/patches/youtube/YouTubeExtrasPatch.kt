@@ -1,5 +1,6 @@
 package io.github.bryceaspringfield.morphe.patches.youtube
 
+import io.github.bryceaspringfield.morphe.patches.hookReturns
 import app.morphe.patcher.extensions.InstructionExtensions.addInstruction
 import app.morphe.patcher.extensions.InstructionExtensions.addInstructions
 import app.morphe.patcher.extensions.InstructionExtensions.getInstruction
@@ -73,9 +74,7 @@ internal val youtubeExtrasBasePatch = bytecodePatch {
         if (initialize == null) {
             logger.warning("Morphe Patches' settings screen is missing, so the settings cannot be edited.")
         } else initialize.apply {
-            // From the last return to the first, so earlier indices stay valid.
-            instructions.withIndex().filter { it.value.opcode == Opcode.RETURN_VOID }.map { it.index }.reversed()
-                .forEach { addInstruction(it, "invoke-static { }, $EXTENSION/SettingsUi;->addSettings()V") }
+            hookReturns(Opcode.RETURN_VOID, "invoke-static { }, $EXTENSION/SettingsUi;->addSettings()V")
             addInstruction(0, "invoke-static { p0 }, $EXTENSION/SettingsUi;->setFragment(Ljava/lang/Object;)V")
         }
     }

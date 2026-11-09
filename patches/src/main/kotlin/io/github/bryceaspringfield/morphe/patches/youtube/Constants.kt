@@ -1,6 +1,6 @@
 package io.github.bryceaspringfield.morphe.patches.youtube
 
-// The YouTube versions Morphe Patches v2.1.0 supports, kept equal to its own list, since this bundle is used beside it.
+// The YouTube versions Morphe Patches v2.2.0-dev.4 supports, kept equal to its own list, since this bundle is used beside it.
 
 import app.morphe.patcher.patch.ApkFileType
 import app.morphe.patcher.patch.AppTarget
@@ -19,6 +19,11 @@ internal object Constants {
             "3d7a1223019aa39d9ea0e3436ab7c0896bfb4fb679f4de5fe7c23f326c8f994a"
         ),
         targets = listOf(
+            AppTarget(
+                version = "21.45.82",
+                minSdk = 29,
+                isExperimental = true
+            ),
             AppTarget(
                 version = "21.44.528",
                 minSdk = 29,
