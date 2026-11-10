@@ -27,6 +27,7 @@ final class SaveChooser {
     private static final java.util.Set<View> HOOKED = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
 
     private static boolean registered;
+    private static long lastScan;
 
     private SaveChooser() {
     }
@@ -184,7 +185,12 @@ final class SaveChooser {
             View decor = a.getWindow().getDecorView();
             if (!HOOKED.add(decor)) return;
             decor.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
-                if (XSettings.SAVE_OPENS_CHOOSER.get() && app.morphe.extension.youtube.shared.PlayerType.getCurrent().isMaximizedOrFullscreen()) scan(decor);
+                // Also on feed cards, whose bookmark saves to Watch later at once; scans at most every 300 ms.
+                if (!XSettings.SAVE_OPENS_CHOOSER.get()) return;
+                long now = android.os.SystemClock.uptimeMillis();
+                if (now - lastScan < 300) return;
+                lastScan = now;
+                scan(decor);
             });
         }
 

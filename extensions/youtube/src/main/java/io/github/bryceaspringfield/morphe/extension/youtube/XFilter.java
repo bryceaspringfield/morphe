@@ -47,6 +47,7 @@ public final class XFilter extends Filter {
         XSettings.load();
         addPathCallbacks(feedItems, comments, progressBar);
         SaveChooser.register();
+        NavTapFix.register();
         NetworkRecovery.register();
     }
 
@@ -78,7 +79,10 @@ public final class XFilter extends Filter {
         VideoItem item = VideoItem.parse(buffer, path);
         Channels.learn(item);
         LAST_ITEM.set(item);
-        String reason = reason(item, place);
+        String found = reason(item, place);
+        final String reason = found != null ? found
+                : watchedPlace(contextInterface) && watchedItem(item, buffer) ? "watched" : null;
+        if ("watched".equals(reason)) Feedback.onWatched(item);
         if (XSettings.DEBUG.get()) {
             Logger.printDebug(() -> "YouTube Extras: " + place + " " + item + (reason == null ? "" : " HIDDEN by " + reason));
         }
@@ -92,6 +96,15 @@ public final class XFilter extends Filter {
     }
 
     
+    /** An item whose own buffer states a red progress bar (any, or 90% with Fully), or one seen with one before. */
+    private static boolean watchedItem(VideoItem item, byte[] buffer) {
+        String mode = XSettings.AUTO_WATCHED.get();
+        if ("off".equals(mode) || item.videoId == null) return false;
+        float p = VideoItem.progress(buffer);
+        if (p >= ("fully".equals(mode) ? 0.9f : 0.005f)) return true;
+        return Feedback.isWatched(item.videoId);
+    }
+
     private static String reason(VideoItem item, Place place) {
         ChannelRules.Rule rule = ChannelRules.match(item);
         if (rule != null) return "channel rule " + rule.channel.label() + " " + rule.kind;

@@ -63,6 +63,24 @@ final class VideoItem {
         this.text = text;
     }
 
+    /**
+     * The watched fraction the item's own buffer states for its thumbnail's red progress bar, or -1 where it has none:
+     * ThumbnailOverlayProgressBar's field 1222 (tag B2 4C) holds a message whose first field is the float progress.
+     */
+    static float progress(byte[] buffer) {
+        if (buffer == null) return -1;
+        for (int i = 0; i + 8 < buffer.length; i++) {
+            if (buffer[i] == (byte) 0xB2 && buffer[i + 1] == 0x4C && (buffer[i + 2] & 0xFF) >= 5 && (buffer[i + 2] & 0xFF) <= 12
+                    && buffer[i + 3] == 0x0D) {
+                int bits = (buffer[i + 4] & 0xFF) | (buffer[i + 5] & 0xFF) << 8 | (buffer[i + 6] & 0xFF) << 16
+                        | (buffer[i + 7] & 0xFF) << 24;
+                float f = Float.intBitsToFloat(bits);
+                if (f >= 0f && f <= 1.0001f) return f;
+            }
+        }
+        return -1;
+    }
+
     static VideoItem parse(byte[] buffer, CharSequence path) {
         String text = new String(buffer, StandardCharsets.UTF_8);
         String videoId = null;
@@ -100,7 +118,8 @@ final class VideoItem {
         // Path only: "shorts-lockup-image" is in every buffer.
         boolean shorts = p.startsWith("shorts") || p.startsWith("inline_shorts") || p.contains("shorts_lockup");
         boolean live = LIVE_ICON.matcher(text).find() || text.contains("BADGE_STYLE_TYPE_LIVE_NOW");
-        boolean playlist = text.contains("youtube.com/playlist?list=PL") && !text.contains("youtube.com/watch?v=");
+        // A playlist lockup may link "watch?v=FIRST&list=PL..." as well as "playlist?list=PL...".
+        boolean playlist = text.contains("list=PL");
         boolean mix = !playlist && text.contains("youtube.com/playlist?list=RD") && !text.contains("youtube.com/watch?v=");
         if (live || playlist || mix) seconds = -1;
         Matcher fm = FEEDBACK_TOKEN.matcher(text);

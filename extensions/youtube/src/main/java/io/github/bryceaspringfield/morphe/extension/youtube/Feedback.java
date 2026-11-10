@@ -22,7 +22,14 @@ final class Feedback {
 
     private static final Set<String> SENT = ConcurrentHashMap.newKeySet();
 
+    /** Videos whose red progress bar was seen on Home or under the player; the filter hides them when laid out again. */
+    private static final Set<String> WATCHED = ConcurrentHashMap.newKeySet();
+
     private Feedback() {
+    }
+
+    static boolean isWatched(String videoId) {
+        return videoId != null && WATCHED.contains(videoId);
     }
 
     static void onHidden(VideoItem item, String why) {
@@ -33,6 +40,7 @@ final class Feedback {
         String mode = XSettings.AUTO_WATCHED.get();
         if ("off".equals(mode) || item == null || item.videoId == null) return;
         if ("fully".equals(mode) && WatchHistory.fraction(item.videoId) < 0.9f) return;
+        WATCHED.add(item.videoId);
         send(item, Reason.WATCHED, "watched (" + mode + ")");
     }
 
@@ -42,6 +50,7 @@ final class Feedback {
         if ("off".equals(mode) || item == null || item.videoId == null) return;
         if (item.videoId.equals(app.morphe.extension.youtube.patches.VideoInformation.getStartingOrPlayingVideoId())) return;
         float played = WatchHistory.fraction(item.videoId);
+        if (played >= ("fully".equals(mode) ? 0.9f : 0.02f)) WATCHED.add(item.videoId);
         if (played >= ("fully".equals(mode) ? 0.9f : 0.02f)) send(item, Reason.WATCHED, "played " + Math.round(played * 100) + "% here (" + mode + ")");
     }
 
