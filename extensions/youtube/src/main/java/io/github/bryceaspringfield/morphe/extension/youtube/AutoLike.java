@@ -31,6 +31,8 @@ public final class AutoLike {
             lastVideo = videoId;
             WatchHistory.onVideo(videoId);
             LiveCatchUp.onVideo(videoId);
+            CommentTitle.onVideo(videoId);
+            if (XSettings.AUDIO_ONLY.get()) AudioOnly.set(true, "video " + videoId);
             AccountHistory.soon();
             if (!XSettings.AUTO_LIKE.get() && !XSettings.DEBUG.get()) return;
             // After 3 s, and only for the watch player: an inline preview in a feed or search loads videos too.
