@@ -37,11 +37,8 @@ final class KickChat extends WebSocketListener {
 
     @Override
     public void onMessage(WebSocket webSocket, ByteString bytes) {
-        if (Kick.debug() && framesLogged < 6) {
-            framesLogged++;
-            Kick.log("socket binary frame, " + bytes.size() + " bytes: " + bytes.hex().substring(0, Math.min(200, bytes.size() * 2)));
-        }
-        inner.onMessage(webSocket, bytes);
+        ByteString out = filterBinary(bytes);
+        if (out != null) inner.onMessage(webSocket, out);
     }
 
     @Override
@@ -114,5 +111,94 @@ final class KickChat extends WebSocketListener {
         } catch (Throwable t) {
             return false;
         }
+    }
+
+    /**
+     * A binary frame without its hidden chat messages; null when every message is hidden. Centrifugo's protobuf
+     * protocol sends replies one after another, each led by its length as a varint; a publication's data is the
+     * chat message's JSON, kept as is inside the reply's bytes, and is read by matching its braces.
+     */
+    static ByteString filterBinary(ByteString bytes) {
+        try {
+            byte[] b = bytes.toByteArray();
+            if (Kick.debug() && binaryLogged < 4 && contains(b, "\"content\"")) {
+                binaryLogged++;
+                String t = new String(b, java.nio.charset.StandardCharsets.UTF_8).replaceAll("[\\x00-\\x1f]", ".");
+                Kick.log("socket binary chat frame, " + b.length + " bytes: " + t.substring(0, Math.min(700, t.length())));
+            }
+            KickHttp.Filters f = KickHttp.Filters.now();
+            if (f.chatWords.isEmpty() && f.chatUsers.isEmpty()) return bytes;
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(b.length);
+            int i = 0, hidden = 0, kept = 0;
+            while (i < b.length) {
+                int start = i;
+                long len = 0;
+                int shift = 0;
+                while (true) {
+                    if (i >= b.length || shift > 28) return bytes;
+                    int c = b[i++] & 0xff;
+                    len |= (long) (c & 0x7f) << shift;
+                    if (c < 0x80) break;
+                    shift += 7;
+                }
+                if (len < 0 || i + len > b.length) return bytes;
+                int end = (int) (i + len);
+                if (hiddenReply(b, i, end, f)) hidden++;
+                else {
+                    out.write(b, start, end - start);
+                    kept++;
+                }
+                i = end;
+            }
+            if (hidden == 0) return bytes;
+            return kept == 0 ? null : ByteString.of(out.toByteArray());
+        } catch (Throwable t) {
+            return bytes;
+        }
+    }
+
+    private static int binaryLogged;
+
+    private static boolean contains(byte[] b, String what) {
+        byte[] w = what.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        outer:
+        for (int i = 0; i + w.length <= b.length; i++) {
+            for (int j = 0; j < w.length; j++) if (b[i + j] != w[j]) continue outer;
+            return true;
+        }
+        return false;
+    }
+
+    /** True when the reply between from and to holds a chat message's JSON which the filters hide. */
+    private static boolean hiddenReply(byte[] b, int from, int to, KickHttp.Filters f) {
+        for (int i = from; i < to; i++) {
+            if (b[i] != '{') continue;
+            int depth = 0;
+            boolean str = false, esc = false;
+            for (int j = i; j < to; j++) {
+                byte c = b[j];
+                if (str) {
+                    if (esc) esc = false;
+                    else if (c == '\\') esc = true;
+                    else if (c == '"') str = false;
+                } else if (c == '"') str = true;
+                else if (c == '{') depth++;
+                else if (c == '}' && --depth == 0) {
+                    String json = new String(b, i, j + 1 - i, java.nio.charset.StandardCharsets.UTF_8);
+                    if (!json.contains("\"content\"")) {
+                        i = j;
+                        break;
+                    }
+                    try {
+                        String why = f.hides(new JSONObject(json));
+                        if (why != null) Kick.log("chat message hidden: " + why);
+                        return why != null;
+                    } catch (Throwable t) {
+                        break;
+                    }
+                }
+            }
+        }
+        return false;
     }
 }

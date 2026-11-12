@@ -17,6 +17,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 import app.morphe.extension.shared.Logger;
+import app.morphe.extension.shared.Utils;
 import app.morphe.extension.shared.settings.BooleanSetting;
 import app.morphe.extension.shared.settings.StringSetting;
 
@@ -95,6 +96,28 @@ public final class SettingsUi {
             watched.setValue(XSettings.AUTO_WATCHED.get());
             watched.setSummary(Strings.get("auto_watched_summary"));
             auto.addPreference(watched);
+            // A typed number, as Morphe's custom playback speeds are typed.
+            EditTextPreference resuggested = new EditTextPreference(ctx);
+            resuggested.setKey(XSettings.RESUGGESTED_LIMIT.key);
+            resuggested.setTitle(Strings.get("resuggested"));
+            resuggested.setDialogTitle(Strings.get("resuggested"));
+            resuggested.setDialogMessage(Strings.get("resuggested_dialog"));
+            resuggested.setText(XSettings.RESUGGESTED_LIMIT.get());
+            resuggested.getEditText().setInputType(InputType.TYPE_CLASS_NUMBER);
+            resuggested.setSummary(resuggestedSummary(XSettings.RESUGGESTED_LIMIT.get()));
+            resuggested.setOnPreferenceChangeListener((pref, value) -> {
+                String v = String.valueOf(value).trim();
+                if (!v.matches("\\d{1,4}")) {
+                    Utils.showToastShort(Strings.get("resuggested_invalid"));
+                    return false;
+                }
+                v = String.valueOf(Integer.parseInt(v));
+                XSettings.RESUGGESTED_LIMIT.save(v);
+                pref.setSummary(resuggestedSummary(v));
+                ((EditTextPreference) pref).setText(v);
+                return false;
+            });
+            auto.addPreference(resuggested);
             toggle(ctx, auto, XSettings.AUTO_LIKE, "auto_like", "auto_like_summary");
             toggle(ctx, auto, XSettings.LIVE_CATCH_UP, "live_catch_up", "live_catch_up_summary");
             text(ctx, auto, XSettings.LIVE_CATCH_UP_SPEED, "live_catch_up_speed", "live_catch_up_speed_summary", false);
@@ -188,6 +211,16 @@ public final class SettingsUi {
         p.setDefaultValue(s.defaultValue);
         p.setChecked(s.get());
         parent.addPreference(p);
+    }
+
+    private static String resuggestedSummary(String value) {
+        int n;
+        try {
+            n = Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            n = Resuggested.DEFAULT_LIMIT;
+        }
+        return n <= 0 ? Strings.get("resuggested_off") : String.format(Strings.get("resuggested_summary"), n);
     }
 
     private static void text(Context ctx, PreferenceGroup parent, StringSetting s, String titleKey, String summaryKey,

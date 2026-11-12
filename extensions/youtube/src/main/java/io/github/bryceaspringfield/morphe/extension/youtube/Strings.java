@@ -31,6 +31,12 @@ final class Strings {
         put("length_summary", "m:ss, h:mm:ss, or minutes; blank shows every length",
                 "m:ss, h:mm:ss o minutos; en blanco muestra todas las duraciones");
         put("home_playlists", "Hide playlists on Home", "Ocultar playlists en Inicio");
+        put("resuggested", "Not interested after repeated suggestions", "No me interesa tras sugerencias repetidas");
+        put("resuggested_summary", "Now %d: a video Home suggests this many times (visits 10 minutes or more apart) which you never opened gets Not interested and is hidden",
+                "Ahora %d: un vídeo que Inicio sugiere estas veces (visitas con 10 minutos o más entre ellas) y que nunca abriste recibe No me interesa y se oculta");
+        put("resuggested_off", "Off (0): type a number of suggestions to turn it on", "Desactivado (0): escribe un número de sugerencias para activarlo");
+        put("resuggested_dialog", "Suggestions on Home before Not interested (0 turns it off)", "Sugerencias en Inicio antes de No me interesa (0 lo desactiva)");
+        put("resuggested_invalid", "Type a whole number, such as 3", "Escribe un número entero, como 3");
         put("past_streams", "Hide past live streams", "Ocultar directos pasados");
         put("past_streams_summary", "Recordings of live streams which have ended (\"Streamed 2 days ago\"), in every feed; streams live now stay",
                 "Grabaciones de directos ya terminados (\"Emitido hace 2 días\"), en todos los feeds; los directos en curso se quedan");

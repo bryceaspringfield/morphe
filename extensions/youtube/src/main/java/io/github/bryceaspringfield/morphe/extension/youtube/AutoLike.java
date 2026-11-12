@@ -30,6 +30,7 @@ public final class AutoLike {
             if (videoId == null || videoId.isEmpty() || videoId.equals(lastVideo)) return;
             lastVideo = videoId;
             WatchHistory.onVideo(videoId);
+            Resuggested.opened(videoId);
             LiveCatchUp.onVideo(videoId);
             CommentTitle.onVideo(videoId);
             if (XSettings.AUDIO_ONLY.get()) AudioOnly.set(true, "video " + videoId);

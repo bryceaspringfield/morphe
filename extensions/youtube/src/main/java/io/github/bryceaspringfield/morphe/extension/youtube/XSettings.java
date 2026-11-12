@@ -26,6 +26,10 @@ public final class XSettings {
 
     // Playlists (not mixes) in the home feed.
     public static final BooleanSetting HIDE_HOME_PLAYLISTS = new BooleanSetting("yx_hide_home_playlists", FALSE);
+    /** Home suggestions of a never-opened video before it gets Not interested; "0" turns it off. */
+    public static final StringSetting RESUGGESTED_LIMIT = new StringSetting("yx_resuggested_limit", "3");
+    /** Seconds between two visits of Home which count a video's suggestion twice (not shown; tests shorten it). */
+    public static final StringSetting RESUGGESTED_GAP = new StringSetting("yx_resuggested_gap_s", "600");
     public static final BooleanSetting HIDE_PAST_STREAMS = new BooleanSetting("yx_hide_past_streams", FALSE);
 
     // Topic presets (comma-separated keys of Topics.KEYS) and the user's own channels to hide.

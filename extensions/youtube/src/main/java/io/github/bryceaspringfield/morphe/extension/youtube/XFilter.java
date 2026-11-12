@@ -100,6 +100,7 @@ public final class XFilter extends Filter {
         Channels.learn(item);
         LAST_ITEM.set(item);
         String found = filters ? reason(item, place) : null;
+        if (found == null && place == Place.HOME && Resuggested.onHome(item)) found = "suggested on Home " + Resuggested.limit() + " times, never opened";
         final String reason = found != null ? found
                 : watchedPlace(contextInterface) && watchedItem(item, buffer) ? "watched" : null;
         if ("watched".equals(reason)) Feedback.onWatched(item);
