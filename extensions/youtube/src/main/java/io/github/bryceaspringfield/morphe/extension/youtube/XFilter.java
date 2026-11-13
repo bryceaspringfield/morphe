@@ -54,6 +54,7 @@ public final class XFilter extends Filter {
         SaveChooser.register();
         QualityAudioRow.register();
         NavTapFix.register();
+        FeedRefresh.register();
         if (!"off".equals(XSettings.AUTO_WATCHED.get())) AccountHistory.refresh();
         SuggestedCard.register();
         PlaybackExtras.register();
@@ -90,17 +91,18 @@ public final class XFilter extends Filter {
         if (contentIndex != 0 || !isTopLevel(path)) return false;
 
         Place place = place(contextInterface);
-        // Morphe's own keyword filter reads the classic feed templates only, so its keywords never reach the cards of
-        // its card layout (lockup.eml): they are applied here, with Morphe's own list and its Home, Subscriptions,
-        // and Search switches.
-        if (path.toString().startsWith("lockup.") && MorpheKeywords.applies(place == Place.SEARCH, place == Place.SUBSCRIPTIONS)) {
+        // Morphe's own keyword filter misses cards of the card layout (lockup.eml) and of the signed-in feed's
+        // templates (video_lockup_with_attachment.eml): its keywords are applied here to every video item, with
+        // Morphe's own list and its Home, Subscriptions, and Search switches.
+        if (isVideoCard(path)) MorpheKeywords.usedSignature = MorpheKeywords.signature();
+        if (isVideoCard(path) && MorpheKeywords.applies(place == Place.SEARCH, place == Place.SUBSCRIPTIONS)) {
             VideoItem card = VideoItem.parse(buffer, path);
             String kw = MorpheKeywords.match(card);
             if (kw != null) {
                 if (XSettings.DEBUG.get()) Logger.printDebug(() -> "YouTube Extras: " + place + " " + card + " HIDDEN by Morphe keyword " + kw);
                 return true;
             }
-            if (XSettings.DEBUG.get()) Logger.printDebug(() -> "YouTube Extras: card text " + card.videoId + " [" + card.text.replace('\n', '|') + "]");
+            if (XSettings.DEBUG.get()) Logger.printDebug(() -> "YouTube Extras: card " + path + " " + card.videoId + " [" + card.text.replace('\n', '|') + "]");
         }
         // Mark watched videos is its own option: it applies on Home and under the player whatever the filters' places.
         boolean filters = applies(place);
@@ -189,6 +191,13 @@ public final class XFilter extends Filter {
             }
         }
         return false;
+    }
+
+    /** A video card of any feed template: not a Shorts shelf cell, a playlist, or a radio. */
+    private static boolean isVideoCard(CharSequence path) {
+        String p = path.toString();
+        return !p.startsWith("inline_shorts") && !p.startsWith("shorts_") && !p.startsWith("compact_playlist")
+                && !p.startsWith("compact_radio");
     }
 
     /**

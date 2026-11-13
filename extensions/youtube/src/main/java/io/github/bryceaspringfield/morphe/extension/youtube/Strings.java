@@ -123,13 +123,19 @@ final class Strings {
         put("dearrow_suggest_message", "Describe the video plainly, in sentence case, with no clickbait. DeArrow shows a title once enough users vote for it.",
                 "Describe el video con claridad, con mayúscula solo al inicio y sin clickbait. DeArrow muestra un título cuando suficientes usuarios lo votan.");
         put("dearrow_send", "Send", "Enviar");
+        put("dearrow_vote_title", "Vote on this DeArrow title", "Votar este título de DeArrow");
+        put("dearrow_vote_message", "Upvote the title as it is, edit it and send your own (the edit is a new suggestion), or downvote it. DeArrow shows a title once enough users vote for it.",
+                "Vota a favor del título tal como está, edítalo y envía el tuyo (la edición es una sugerencia nueva), o vota en contra. DeArrow muestra un título cuando suficientes usuarios votan por él.");
+        put("dearrow_upvote", "Upvote", "A favor");
+        put("dearrow_downvote", "Downvote", "En contra");
+        put("dearrow_downvoted", "Downvote sent to DeArrow", "Voto en contra enviado a DeArrow");
         put("dearrow_sent", "Title sent to DeArrow", "Título enviado a DeArrow");
         put("dearrow_refused", "DeArrow refused the title", "DeArrow rechazó el título");
         put("dearrow_failed", "The title was not sent (no connection to DeArrow)", "No se envió el título (sin conexión con DeArrow)");
         put("dearrow_no_original", "The video's own title was not found", "No se encontró el título propio del video");
         put("live_catch_up", "Catch up to live streams", "Alcanzar el directo");
-        put("live_catch_up_summary", "A live stream up to 15 s behind its live edge plays faster until it cannot get closer, and again whenever it falls 1 s behind; a stream further behind (rewound on purpose) is left alone",
-                "Un directo con hasta 15 s de retraso respecto al momento en vivo se reproduce más rápido hasta que no puede acercarse más, y otra vez cada vez que se atrasa 1 s; un directo más atrasado (retrocedido a propósito) se deja como está");
+        put("live_catch_up_summary", "A live stream 0 to 15 s behind its live edge plays faster, and stays faster at the edge (where it cannot get ahead), so it catches up again at once whenever it falls behind; a stream more than 15 s behind (rewound on purpose) is left alone",
+                "Un directo a 0 a 15 s de su borde en vivo se reproduce más rápido y sigue así en el borde (donde no puede adelantarse), por lo que se pone al día de inmediato cada vez que se retrasa; un directo a más de 15 s (retrocedido a propósito) no se toca");
         put("live_catch_up_speed", "Catch-up speed", "Velocidad para alcanzar el directo");
         put("live_catch_up_speed_summary", "From 1.25 to 4; 2 by default", "De 1.25 a 4; 2 por defecto");
         put("cat_playback", "Playback", "Reproducción");
