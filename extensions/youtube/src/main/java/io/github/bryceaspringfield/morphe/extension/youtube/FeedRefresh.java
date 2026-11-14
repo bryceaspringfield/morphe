@@ -34,7 +34,7 @@ final class FeedRefresh {
         }
     }
 
-    private static View findHome(View v, int fromY) {
+    static View findHome(View v, int fromY) {
         if (v.isShown() && v.isClickable()) {
             CharSequence d = v.getContentDescription();
             if (d != null) {
@@ -54,7 +54,7 @@ final class FeedRefresh {
     }
 
     /** A finger drag from the upper to the lower part of the screen, as the pull that reloads a feed at its top. */
-    private static void pullDown(View decor) {
+    static void pullDown(View decor) {
         long start = android.os.SystemClock.uptimeMillis();
         float x = decor.getWidth() / 2f, y0 = decor.getHeight() * 0.25f, y1 = decor.getHeight() * 0.65f;
         int steps = 16;

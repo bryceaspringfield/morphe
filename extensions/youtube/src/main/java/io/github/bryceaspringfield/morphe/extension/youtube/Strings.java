@@ -30,6 +30,24 @@ final class Strings {
         put("max_length", "Hide videos longer than", "Ocultar videos de más de");
         put("length_summary", "m:ss, h:mm:ss, or minutes; blank shows every length",
                 "m:ss, h:mm:ss o minutos; en blanco muestra todas las duraciones");
+        put("min_views", "Hide videos with fewer views than", "Ocultar videos con menos visualizaciones que");
+        put("min_views_summary", "5000, 5k, or 1.5m; blank shows every video. Videos under a day old stay, since they have had no time to gain views",
+                "5000, 5k o 1.5m; en blanco muestra todos. Los videos de menos de un día se quedan, pues no tuvieron tiempo de sumar visualizaciones");
+        put("max_age", "Hide videos older than", "Ocultar videos de más de");
+        put("max_age_summary", "Days (30), weeks (8w), months (6m), or years (2y); blank shows every age",
+                "Días (30), semanas (8w), meses (6m) o años (2y); en blanco muestra todas las edades");
+        put("members_only", "Hide members-only videos", "Ocultar videos solo para miembros");
+        put("members_only_summary", "Videos only a channel's paying members can watch, in every feed",
+                "Videos que solo pueden ver los miembros de pago de un canal, en todos los feeds");
+        put("upcoming", "Hide upcoming premieres and scheduled streams", "Ocultar estrenos y directos programados");
+        put("upcoming_summary", "Videos and streams which have not started yet (\"Premieres in 3 hours\", \"Scheduled for\"), in every feed",
+                "Videos y directos que aún no empezaron (\"Se estrena en 3 horas\", \"Programado para\"), en todos los feeds");
+        put("sleep_timer", "Stop playback after (minutes)", "Detener la reproducción tras (minutos)");
+        put("sleep_timer_summary", "A sleep timer: the first playback starts the countdown, and a video still playing when it ends is paused; playing again starts a new one. Blank is off",
+                "Un temporizador: la primera reproducción inicia la cuenta atrás y un video que sigue sonando al terminar se pausa; reproducir de nuevo inicia otra. En blanco está desactivado");
+        put("home_more", "Keep Home going", "Mantener Inicio sin fin");
+        put("home_more_summary", "When Home runs out of videos, it reloads with a new batch and hides the videos it showed before, so scrolling keeps finding new ones",
+                "Cuando Inicio se queda sin videos, se recarga con un lote nuevo y oculta los que ya mostró, así que al desplazarte siguen apareciendo videos nuevos");
         put("home_playlists", "Hide playlists on Home", "Ocultar playlists en Inicio");
         put("resuggested", "Not interested after repeated suggestions", "No me interesa tras sugerencias repetidas");
         put("resuggested_summary", "Now %d: a video Home suggests this many times (visits 10 minutes or more apart) which you never opened gets Not interested and is hidden",
@@ -104,6 +122,10 @@ final class Strings {
         put("auto_like", "Like every video watched", "Dar Me gusta a cada video que mires");
         put("auto_like_summary", "When a video opens; an existing like or dislike stays",
                 "Al abrir un video; un Me gusta o No me gusta existente se mantiene");
+        put("save_style", "Style of the playlist list on feed cards", "Estilo de la lista de playlists en las tarjetas");
+        put("save_style_sheet", "With thumbnails, as on the watch page", "Con miniaturas, como en la página del video");
+        put("save_style_list", "Text list", "Lista de texto");
+        put("save_style_summary", "What a feed card's Save opens when the option above is on", "Lo que abre Guardar en una tarjeta del feed con la opción de arriba activada");
         put("save_chooser", "Save button opens the playlist list", "El botón Guardar abre la lista de playlists");
         put("save_chooser_summary", "In place of saving to Watch later or the last playlist",
                 "En vez de guardar en Ver más tarde o en la última playlist");

@@ -72,6 +72,11 @@ public final class SettingsUi {
             filters.addPreference(channels);
             text(ctx, filters, XSettings.MIN_LENGTH, "min_length", "length_summary", false);
             text(ctx, filters, XSettings.MAX_LENGTH, "max_length", "length_summary", false);
+            text(ctx, filters, XSettings.MIN_VIEWS, "min_views", "min_views_summary", false);
+            text(ctx, filters, XSettings.MAX_AGE, "max_age", "max_age_summary", false);
+            toggle(ctx, filters, XSettings.HIDE_MEMBERS_ONLY, "members_only", "members_only_summary");
+            toggle(ctx, filters, XSettings.HIDE_UPCOMING, "upcoming", "upcoming_summary");
+            toggle(ctx, filters, XSettings.HOME_MORE, "home_more", "home_more_summary");
             toggle(ctx, filters, XSettings.HIDE_HOME_PLAYLISTS, "home_playlists", "home_playlists_summary");
             toggle(ctx, filters, XSettings.HIDE_PAST_STREAMS, "past_streams", "past_streams_summary");
             String[] topicLabels = new String[Topics.KEYS.length];
@@ -124,6 +129,8 @@ public final class SettingsUi {
             toggle(ctx, video, XSettings.LIVE_CATCH_UP, "live_catch_up", "live_catch_up_summary");
             text(ctx, video, XSettings.LIVE_CATCH_UP_SPEED, "live_catch_up_speed", "live_catch_up_speed_summary", false);
 
+            text(ctx, video, XSettings.SLEEP_MINUTES, "sleep_timer", "sleep_timer_summary", false);
+
             PreferenceGroup playback = video;
             toggle(ctx, playback, XSettings.KEEP_PLAYING_SCREEN_OFF, "keep_playing", "keep_playing_summary");
             toggle(ctx, playback, XSettings.AUDIO_ONLY, "audio_only", "audio_only_summary");
@@ -131,6 +138,15 @@ public final class SettingsUi {
             toggle(ctx, playback, XSettings.AUDIO_ONLY_SCREEN_OFF, "audio_only_off", "audio_only_off_summary");
 
             toggle(ctx, player, XSettings.SAVE_OPENS_CHOOSER, "save_chooser", "save_chooser_summary");
+            ListPreference saveStyle = new ListPreference(ctx);
+            saveStyle.setKey(XSettings.SAVE_STYLE.key);
+            saveStyle.setTitle(Strings.get("save_style"));
+            saveStyle.setDialogTitle(Strings.get("save_style"));
+            saveStyle.setEntries(new String[]{Strings.get("save_style_sheet"), Strings.get("save_style_list")});
+            saveStyle.setEntryValues(new String[]{"sheet", "list"});
+            saveStyle.setValue(XSettings.SAVE_STYLE.get());
+            saveStyle.setSummary(Strings.get("save_style_summary"));
+            player.addPreference(saveStyle);
             toggle(ctx, player, XSettings.HIDE_COMMENTS_COMMUNITY, "hide_community", "hide_community_summary");
             toggle(ctx, player, XSettings.HIDE_CHANNEL_BAR_DOTS, "hide_dots", null);
             toggle(ctx, player, XSettings.LIVE_CHAT_ALL_MESSAGES, "live_chat_all", "live_chat_all_summary");

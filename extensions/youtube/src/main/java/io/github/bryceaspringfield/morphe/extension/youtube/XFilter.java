@@ -55,9 +55,11 @@ public final class XFilter extends Filter {
         QualityAudioRow.register();
         NavTapFix.register();
         FeedRefresh.register();
+        HomeMore.register();
         if (!"off".equals(XSettings.AUTO_WATCHED.get())) AccountHistory.refresh();
         SuggestedCard.register();
         PlaybackExtras.register();
+        SleepTimer.register();
         ChatAvatar.register();
         NetworkRecovery.register();
     }
@@ -115,8 +117,13 @@ public final class XFilter extends Filter {
         final String reason = found != null ? found
                 : watchedPlace(contextInterface) && watchedItem(item, buffer) ? "watched" : null;
         if ("watched".equals(reason)) Feedback.onWatched(item);
+        HomeMore.onFeedItem(place == Place.HOME);
+        if (place == Place.HOME && reason == null && !item.playlist && !item.mix) HomeMore.onShown(item.videoId);
         if (XSettings.DEBUG.get()) {
             Logger.printDebug(() -> "YouTube Extras: " + place + " " + item + (reason == null ? "" : " HIDDEN by " + reason));
+            if (item.videoId == null || item.playlist || item.seconds < 0) {
+                Logger.printDebug(() -> "YouTube Extras: raw " + path + " :: " + VideoItem.runs(buffer, 3000));
+            }
         }
         boolean feedbackPlace = watchedPlace(contextInterface) || NavigationBar.NavigationButton
                 .getSelectedNavigationButton(contextInterface) == NavigationBar.NavigationButton.SUBSCRIPTIONS;
@@ -159,6 +166,7 @@ public final class XFilter extends Filter {
         ChannelRules.Rule rule = ChannelRules.match(item);
         if (rule != null) return "channel rule " + rule.channel.label() + " " + rule.kind;
         if (place == Place.HOME && XSettings.HIDE_HOME_PLAYLISTS.get() && item.playlist) return "home playlist";
+        if (place == Place.HOME && HomeMore.shownBefore(item.videoId)) return "shown before the new Home batch";
         if (XSettings.HIDE_PAST_STREAMS.get() && !item.live && !item.shorts && item.text != null
                 && VideoItem.PAST_STREAM.matcher(item.text).find()) return "past stream";
         if (item.seconds >= 0 && !item.shorts) {
@@ -166,6 +174,21 @@ public final class XFilter extends Filter {
             int max = Lengths.parse(XSettings.MAX_LENGTH.get());
             if (min > 0 && item.seconds < min) return "shorter than " + min + " s";
             if (max > 0 && item.seconds > max) return "longer than " + max + " s";
+        }
+        if (item.text != null && !item.playlist && !item.mix) {
+            if (XSettings.HIDE_MEMBERS_ONLY.get() && Metadata.membersOnly(item.text)) return "members only";
+            if (XSettings.HIDE_UPCOMING.get() && Metadata.upcoming(item.text)) return "upcoming premiere or stream";
+            double maxAge = Metadata.parseAge(XSettings.MAX_AGE.get());
+            long minViews = Metadata.parseViews(XSettings.MIN_VIEWS.get());
+            if ((maxAge > 0 || minViews > 0) && !item.live && !item.shorts) {
+                double age = Metadata.ageDays(item.text);
+                if (maxAge > 0 && age > maxAge) return "older than " + XSettings.MAX_AGE.get();
+                // A video under a day old has had no time to gain views; one with no age stated is left alone too.
+                if (minViews > 0 && age >= 1) {
+                    long views = Metadata.views(item.text);
+                    if (views >= 0 && views < minViews) return "under " + XSettings.MIN_VIEWS.get() + " views";
+                }
+            }
         }
         String topic = Topics.match(item);
         if (topic != null) return "topic " + topic;
