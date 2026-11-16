@@ -93,6 +93,8 @@ public final class XFilter extends Filter {
         if (contentIndex != 0 || !isTopLevel(path)) return false;
 
         Place place = place(contextInterface);
+        homeSelected = NavigationBar.NavigationButton.getSelectedNavigationButton(contextInterface)
+                == NavigationBar.NavigationButton.HOME;
         // Morphe's own keyword filter misses cards of the card layout (lockup.eml) and of the signed-in feed's
         // templates (video_lockup_with_attachment.eml): its keywords are applied here to every video item, with
         // Morphe's own list and its Home, Subscriptions, and Search switches.
@@ -102,6 +104,9 @@ public final class XFilter extends Filter {
             String kw = MorpheKeywords.match(card);
             if (kw != null) {
                 if (XSettings.DEBUG.get()) Logger.printDebug(() -> "YouTube Extras: " + place + " " + card + " HIDDEN by Morphe keyword " + kw);
+                // Hidden by keyword: the same automatic Not interested > I don't like the video as every other filter.
+                // Home and the videos under the player only: a subscribed channel's videos need no Not interested.
+                if (watchedPlace(contextInterface)) Feedback.onHidden(card, "Morphe keyword " + kw);
                 return true;
             }
             if (XSettings.DEBUG.get()) Logger.printDebug(() -> "YouTube Extras: card " + path + " " + card.videoId + " [" + card.text.replace('\n', '|') + "]");
@@ -113,20 +118,23 @@ public final class XFilter extends Filter {
         Channels.learn(item);
         LAST_ITEM.set(item);
         String found = filters ? reason(item, place) : null;
-        if (found == null && place == Place.HOME && Resuggested.onHome(item)) found = "suggested on Home " + Resuggested.limit() + " times, never opened";
+        if (found == null && ((place == Place.HOME && homeSelected)
+                || (place == Place.RELATED && XSettings.RESUGGESTED_RELATED.get())) && Resuggested.onHome(item)) {
+            found = "suggested " + (place == Place.HOME ? "on Home " : "under videos ") + Resuggested.limit() + " times, never opened";
+        }
         final String reason = found != null ? found
                 : watchedPlace(contextInterface) && watchedItem(item, buffer) ? "watched" : null;
         if ("watched".equals(reason)) Feedback.onWatched(item);
         HomeMore.onFeedItem(place == Place.HOME);
-        if (place == Place.HOME && reason == null && !item.playlist && !item.mix) HomeMore.onShown(item.videoId);
+        if (place == Place.HOME && homeSelected && reason == null && !item.playlist && !item.mix) HomeMore.onShown(item.videoId);
         if (XSettings.DEBUG.get()) {
             Logger.printDebug(() -> "YouTube Extras: " + place + " " + item + (reason == null ? "" : " HIDDEN by " + reason));
             if (item.videoId == null || item.playlist || item.seconds < 0) {
                 Logger.printDebug(() -> "YouTube Extras: raw " + path + " :: " + VideoItem.runs(buffer, 3000));
             }
         }
-        boolean feedbackPlace = watchedPlace(contextInterface) || NavigationBar.NavigationButton
-                .getSelectedNavigationButton(contextInterface) == NavigationBar.NavigationButton.SUBSCRIPTIONS;
+        // Home and the videos under the player only (Bryce, 2026-11-16): the Subscriptions page lists channels the user chose.
+        boolean feedbackPlace = watchedPlace(contextInterface);
         if (reason == null) {
             if (watchedPlace(contextInterface)) Feedback.onFeedItem(item);
             // A category lookup slower than its wait shows the item; when the answer names a hidden category, the
@@ -162,11 +170,14 @@ public final class XFilter extends Filter {
         return Feedback.isWatched(item.videoId);
     }
 
+    /** True when Home's own button is the selected one (not merely unknown); only then Home-only rules may hide an item. */
+    private static boolean homeSelected;
+
     private static String reason(VideoItem item, Place place) {
         ChannelRules.Rule rule = ChannelRules.match(item);
         if (rule != null) return "channel rule " + rule.channel.label() + " " + rule.kind;
         if (place == Place.HOME && XSettings.HIDE_HOME_PLAYLISTS.get() && item.playlist) return "home playlist";
-        if (place == Place.HOME && HomeMore.shownBefore(item.videoId)) return "shown before the new Home batch";
+        if (place == Place.HOME && homeSelected && HomeMore.shownBefore(item.videoId)) return "shown before the new Home batch";
         if (XSettings.HIDE_PAST_STREAMS.get() && !item.live && !item.shorts && item.text != null
                 && VideoItem.PAST_STREAM.matcher(item.text).find()) return "past stream";
         if (item.seconds >= 0 && !item.shorts) {
@@ -183,8 +194,8 @@ public final class XFilter extends Filter {
             if ((maxAge > 0 || minViews > 0) && !item.live && !item.shorts) {
                 double age = Metadata.ageDays(item.text);
                 if (maxAge > 0 && age > maxAge) return "older than " + XSettings.MAX_AGE.get();
-                // A video under a day old has had no time to gain views; one with no age stated is left alone too.
-                if (minViews > 0 && age >= 1) {
+                // By default every video counts; "Keep new videos" leaves a video under a day old (or with no age) alone.
+                if (minViews > 0 && (!XSettings.VIEWS_KEEP_NEW.get() || age >= 1)) {
                     long views = Metadata.views(item.text);
                     if (views >= 0 && views < minViews) return "under " + XSettings.MIN_VIEWS.get() + " views";
                 }
