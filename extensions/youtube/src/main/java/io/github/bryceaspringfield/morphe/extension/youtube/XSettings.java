@@ -34,6 +34,13 @@ public final class XSettings {
     public static final BooleanSetting APPLY_SEARCH = new BooleanSetting("yx_apply_search", true);
     public static final BooleanSetting APPLY_RELATED = new BooleanSetting("yx_apply_related", true);
 
+    // Where Mark watched videos applies (2026-11-16): Home and the videos under the player, as before, by default.
+    public static final BooleanSetting WATCHED_HOME = new BooleanSetting("yx_watched_home", true);
+    public static final BooleanSetting WATCHED_SUBSCRIPTIONS = new BooleanSetting("yx_watched_subscriptions", false);
+    public static final BooleanSetting WATCHED_CHANNEL = new BooleanSetting("yx_watched_channel", false);
+    public static final BooleanSetting WATCHED_SEARCH = new BooleanSetting("yx_watched_search", false);
+    public static final BooleanSetting WATCHED_RELATED = new BooleanSetting("yx_watched_related", true);
+
     // Playlists (not mixes) in the home feed.
     public static final BooleanSetting HIDE_HOME_PLAYLISTS = new BooleanSetting("yx_hide_home_playlists", FALSE);
     /** Home suggestions of a never-opened video before it gets Not interested; "0" turns it off. */

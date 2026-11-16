@@ -127,6 +127,8 @@ final class Strings {
         put("apply_subscriptions", "Subscriptions", "Suscripciones");
         put("apply_search", "Search results", "Resultados de búsqueda");
         put("apply_related", "Videos under the player", "Videos debajo del reproductor");
+        put("apply_channel", "Channel pages", "Páginas de canales");
+        put("cat_watched_where", "Mark watched videos applies to", "Marcar videos vistos se aplica a");
         put("auto_dislike", "Mark hidden videos as not liked",
                 "Marcar los videos ocultos como no me gusta");
         put("auto_dislike_summary", "Each video the filters hide gets Not interested > Tell us why > I don't like the video",

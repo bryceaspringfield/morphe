@@ -46,7 +46,7 @@ public final class XFilter extends Filter {
     /** The last top-level item laid out on this thread; Litho lays out an item's children after it, on its thread. */
     private static final ThreadLocal<VideoItem> LAST_ITEM = new ThreadLocal<>();
 
-    private enum Place {HOME, SUBSCRIPTIONS, SEARCH, RELATED, OTHER}
+    private enum Place {HOME, SUBSCRIPTIONS, CHANNEL, SEARCH, RELATED, OTHER}
 
     public XFilter() {
         XSettings.load();
@@ -106,7 +106,7 @@ public final class XFilter extends Filter {
                 if (XSettings.DEBUG.get()) Logger.printDebug(() -> "YouTube Extras: " + place + " " + card + " HIDDEN by Morphe keyword " + kw);
                 // Hidden by keyword: the same automatic Not interested > I don't like the video as every other filter.
                 // Home and the videos under the player only: a subscribed channel's videos need no Not interested.
-                if (watchedPlace(contextInterface)) Feedback.onHidden(card, "Morphe keyword " + kw);
+                if (homeOrRelated(contextInterface)) Feedback.onHidden(card, "Morphe keyword " + kw);
                 return true;
             }
             if (XSettings.DEBUG.get()) Logger.printDebug(() -> "YouTube Extras: card " + path + " " + card.videoId + " [" + card.text.replace('\n', '|') + "]");
@@ -124,7 +124,7 @@ public final class XFilter extends Filter {
         }
         final String reason = found != null ? found
                 : watchedPlace(contextInterface) && watchedItem(item, buffer) ? "watched" : null;
-        if ("watched".equals(reason)) Feedback.onWatched(item);
+        if ("watched".equals(reason) && homeOrRelated(contextInterface)) Feedback.onWatched(item);
         HomeMore.onFeedItem(place == Place.HOME);
         if (place == Place.HOME && homeSelected && reason == null && !item.playlist && !item.mix) HomeMore.onShown(item.videoId);
         if (XSettings.DEBUG.get()) {
@@ -134,7 +134,7 @@ public final class XFilter extends Filter {
             }
         }
         // Home and the videos under the player only (Bryce, 2026-11-16): the Subscriptions page lists channels the user chose.
-        boolean feedbackPlace = watchedPlace(contextInterface);
+        boolean feedbackPlace = homeOrRelated(contextInterface);
         if (reason == null) {
             if (watchedPlace(contextInterface)) Feedback.onFeedItem(item);
             // A category lookup slower than its wait shows the item; when the answer names a hidden category, the
@@ -246,16 +246,29 @@ public final class XFilter extends Filter {
     }
 
     /** The player's related videos, or Home with its button selected (a page with none, such as History, is excluded). */
-    private static boolean watchedPlace(ContextInterface contextInterface) {
+    private static boolean homeOrRelated(ContextInterface contextInterface) {
         if (PlayerType.getCurrent().isMaximizedOrFullscreen()) return true;
         if (NavigationBar.isSearchBarActive()) return false;
         return NavigationBar.NavigationButton.getSelectedNavigationButton(contextInterface)
                 == NavigationBar.NavigationButton.HOME;
     }
 
+    /** Where Mark watched videos applies: the places switched on in Settings > Feed. */
+    private static boolean watchedPlace(ContextInterface contextInterface) {
+        return switch (place(contextInterface)) {
+            case HOME -> XSettings.WATCHED_HOME.get();
+            case SUBSCRIPTIONS -> XSettings.WATCHED_SUBSCRIPTIONS.get();
+            case CHANNEL -> XSettings.WATCHED_CHANNEL.get();
+            case SEARCH -> XSettings.WATCHED_SEARCH.get();
+            case RELATED -> XSettings.WATCHED_RELATED.get();
+            case OTHER -> false;
+        };
+    }
+
     private static Place place(ContextInterface contextInterface) {
         if (PlayerType.getCurrent().isMaximizedOrFullscreen()) return Place.RELATED;
         if (NavigationBar.isSearchBarActive()) return Place.SEARCH;
+        if (BrowsePage.isChannel()) return Place.CHANNEL;
         NavigationBar.NavigationButton b = NavigationBar.NavigationButton.getSelectedNavigationButton(contextInterface);
         if (b == null) return Place.HOME;
         return switch (b) {
@@ -271,7 +284,7 @@ public final class XFilter extends Filter {
             case SUBSCRIPTIONS -> XSettings.APPLY_SUBSCRIPTIONS.get();
             case SEARCH -> XSettings.APPLY_SEARCH.get();
             case RELATED -> XSettings.APPLY_RELATED.get();
-            case OTHER -> false;
+            case CHANNEL, OTHER -> false;
         };
     }
 }

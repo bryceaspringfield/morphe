@@ -104,6 +104,12 @@ public final class SettingsUi {
             watched.setValue(XSettings.AUTO_WATCHED.get());
             watched.setSummary(Strings.get("auto_watched_summary"));
             auto.addPreference(watched);
+            PreferenceCategory watchedWhere = category(ctx, feed, "cat_watched_where");
+            toggle(ctx, watchedWhere, XSettings.WATCHED_HOME, "apply_home", null);
+            toggle(ctx, watchedWhere, XSettings.WATCHED_SUBSCRIPTIONS, "apply_subscriptions", null);
+            toggle(ctx, watchedWhere, XSettings.WATCHED_CHANNEL, "apply_channel", null);
+            toggle(ctx, watchedWhere, XSettings.WATCHED_SEARCH, "apply_search", null);
+            toggle(ctx, watchedWhere, XSettings.WATCHED_RELATED, "apply_related", null);
             // A typed number, as Morphe's custom playback speeds are typed.
             EditTextPreference resuggested = new EditTextPreference(ctx);
             resuggested.setKey(XSettings.RESUGGESTED_LIMIT.key);
