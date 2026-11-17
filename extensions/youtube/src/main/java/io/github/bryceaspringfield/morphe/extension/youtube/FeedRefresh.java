@@ -55,6 +55,8 @@ final class FeedRefresh {
 
     /** A finger drag from the upper to the lower part of the screen, as the pull that reloads a feed at its top. */
     static void pullDown(View decor) {
+        // Never pull a video, a channel page, or the profile: only Home reloads this way (2026-11-17).
+        if (!HomeMore.onHomePage()) return;
         long start = android.os.SystemClock.uptimeMillis();
         float x = decor.getWidth() / 2f, y0 = decor.getHeight() * 0.25f, y1 = decor.getHeight() * 0.65f;
         int steps = 16;
@@ -89,6 +91,10 @@ final class FeedRefresh {
                 Utils.runOnMainThreadDelayed(() -> {
                     View home = findHome(decor, decor.getHeight() * 3 / 4);
                     if (home == null || !home.isSelected()) {
+                        MorpheKeywords.usedSignature = used;
+                        return;
+                    }
+                    if (!HomeMore.onHomePage()) {
                         MorpheKeywords.usedSignature = used;
                         return;
                     }
