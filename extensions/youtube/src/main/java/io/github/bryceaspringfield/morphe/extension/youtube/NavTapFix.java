@@ -46,6 +46,9 @@ final class NavTapFix {
 
     private static boolean isButton(View v) {
         String d = desc(v);
+        // A button with news reads "Subscriptions: New content is available" or "Notifications: 2 new items".
+        int colon = d.indexOf(':');
+        if (colon > 0) d = d.substring(0, colon).trim();
         for (String b : BUTTONS) if (d.equals(b)) return true;
         return false;
     }

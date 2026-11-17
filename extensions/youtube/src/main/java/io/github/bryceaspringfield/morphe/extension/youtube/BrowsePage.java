@@ -35,8 +35,14 @@ final class BrowsePage {
         }
     }
 
+    private static String lastLogged = "";
+
     static boolean isChannel() {
         String id = id();
+        if (XSettings.DEBUG.get() && !id.equals(lastLogged)) {
+            lastLogged = id;
+            app.morphe.extension.shared.Logger.printDebug(() -> "YouTube Extras: browse page id [" + id + "]");
+        }
         return id.startsWith("UC") || id.startsWith("FEchannel") || id.startsWith("FEpost");
     }
 }
